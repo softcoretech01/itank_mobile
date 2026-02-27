@@ -1,0 +1,25 @@
+{
+  "dart.analysisExcludedFolders": [
+    "${workspaceFolder}/FlutterApp/flutter",
+    "${workspaceFolder}/FlutterApp/build",
+    "${workspaceFolder}/FlutterApp/.dart_tool",
+    "${workspaceFolder}/FlutterApp/.idea"
+  ],
+  "files.exclude": {
+    "FlutterApp/flutter": true,
+    "FlutterApp/build": true,
+    "FlutterApp/.idea": true
+  }
+}
+{
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./Backend",
+        "-p",
+        "*test.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+    "dart.showTodos": false
+}

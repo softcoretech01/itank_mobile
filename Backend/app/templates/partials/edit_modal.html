@@ -1,0 +1,181 @@
+<!-- ✅ EDIT TANK MODAL -->
+<div class="modal" id="editModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Edit Tank</div>
+      <button class="close-btn" id="closeEditBtn">✖</button>
+    </div>
+
+    <form id="editForm" autocomplete="off" novalidate>
+      <input type="hidden" id="edit_id" name="id" />
+
+      <!-- ✅ TABS NAVIGATION -->
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="edit-tab-tank">Tank</button>
+        <button type="button" class="tab-btn" data-tab="edit-tab-regulations">Regulations</button>
+        <button type="button" class="tab-btn" data-tab="edit-tab-cargo">Cargo</button>
+        <button type="button" class="tab-btn" data-tab="edit-tab-certificate">Certificate</button>
+        <button type="button" class="tab-btn" data-tab="edit-tab-drawing">Drawing</button>
+        <button type="button" class="tab-btn" data-tab="edit-tab-valve">Valve</button>
+      </div>
+
+      <!-- ✅ TANK TAB -->
+      <div class="tab-content active" id="edit-tab-tank">
+        <div class="grid-2">
+          <div class="field">
+            <label for="edit_tank_number">Tank Number *</label>
+            <input id="edit_tank_number" name="tank_number" required />
+          </div>
+          <div class="field" style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="edit_lease" name="lease" />
+            <label for="edit_lease" style="margin:0;color:var(--muted);font-weight:600;font-size:13px;">Lease</label>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="edit_mfgr">Manufacturer *</label><input id="edit_mfgr" required /></div>
+          <div class="field"><label for="edit_date_mfg">Date MFG</label><input id="edit_date_mfg" type="date" /></div>
+          <div class="field"><label for="edit_pv_code">PV Code *</label><input id="edit_pv_code" required /></div>
+          <div class="field"><label for="edit_un_iso_code">UN/ISO Code *</label><input id="edit_un_iso_code" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="edit_capacity_l">Capacity (L) *</label><input id="edit_capacity_l" type="number" step="0.01" min="0" required /></div>
+          <div class="field"><label for="edit_mawp">MAWP (bar) *</label><input id="edit_mawp" type="number" step="0.01" required /></div>
+          <div class="field"><label for="edit_design_temperature">Design Temperature (°C)</label><input id="edit_design_temperature" /></div>
+          <div class="field"><label for="edit_tare_weight_kg">Tare Weight (kg) *</label><input id="edit_tare_weight_kg" type="number" step="0.01" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="edit_mgw_kg">MGW (kg) *</label><input id="edit_mgw_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="edit_mpl_kg">MPL (kg) *</label><input id="edit_mpl_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="edit_size">ISO Size *</label><input id="edit_size" required /></div>
+          <div class="field"><label for="edit_pump_type">Pump Type *</label><input id="edit_pump_type" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="edit_vesmat">Vessel Material *</label><input id="edit_vesmat" required /></div>
+          <div class="field"><label for="edit_gross_kg">Gross Weight (kg) *</label><input id="edit_gross_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="edit_net_kg">Net Weight (kg) *</label><input id="edit_net_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="edit_color_body_frame">Body/Frame Color *</label><input id="edit_color_body_frame" required /></div>
+        </div>
+
+        <div class="field">
+          <label for="edit_remark">Remarks</label>
+          <textarea id="edit_remark" rows="3"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="edit_updated_by">Updated By (optional)</label>
+          <input id="edit_updated_by" />
+        </div>
+      </div>
+
+      <!-- ✅ REGULATIONS TAB -->
+      <div class="tab-content" id="edit-tab-regulations">
+        <div class="toolbar" style="justify-content:flex-end;margin-bottom:10px;">
+          <button type="button" class="btn" id="btnNewRegFromEdit">+ New Regulation</button>
+        </div>
+
+        <div class="field">
+          <label for="editTankNumberDisplay">Tank Number</label>
+          <input id="editTankNumberDisplay" readonly style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+        </div>
+
+        <div class="field">
+          <label for="editRegulationSelect">Select Regulation</label>
+          <select id="editRegulationSelect" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <option value="">Choose a regulation</option>
+          </select>
+        </div>
+
+        <textarea id="editRegulationText" style="display:none;width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:10px;"
+          rows="3" placeholder="Enter approval number or details..."></textarea>
+
+        <div class="footer-actions" id="editRegSaveFooter" style="margin-top:15px; display:flex; justify-content:flex-end;">
+          <button type="button" class="btn" id="btnSaveEditRegulation">💾 Save Regulation</button>
+        </div>
+
+        <h3 style="margin-top:20px;">Regulations Linked</h3>
+        <table class="table" id="editRegulationsTable" style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th>Regulation</th>
+              <th>Approval No</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ✅ CARGO TAB -->
+      <div class="tab-content" id="edit-tab-cargo">
+        <div class="toolbar" style="justify-content:flex-end;margin-bottom:10px;">
+          <button type="button" class="btn" id="btnNewEditCargo">+ New Cargo</button>
+        </div>
+
+        <div class="field">
+          <label for="editCargoTankNumber">Tank Number</label>
+          <input id="editCargoTankNumber" readonly style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+        </div>
+
+        <div class="field">
+          <label for="editCargoSelect">Select Cargo</label>
+          <select id="editCargoSelect" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <option value="">Choose a cargo</option>
+          </select>
+        </div>
+
+        <div class="footer-actions" style="margin-top:10px;">
+          <button type="button" class="btn" id="btnSaveEditCargo">Save Cargo Reference</button>
+        </div>
+
+        <h3 style="margin-top:20px;">Cargo References Linked</h3>
+        <table class="table" id="editCargoTable" style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th>Cargo Reference</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- ✅ CERTIFICATE / DRAWING / VALVE -->
+      <div class="tab-content" id="edit-tab-certificate"><p>Certificate details placeholder.</p></div>
+      <div class="tab-content" id="edit-tab-drawing"><p>Drawing details placeholder.</p></div>
+      <div class="tab-content" id="edit-tab-valve"><p>Valve details placeholder.</p></div>
+
+      <!-- ✅ FOOTER -->
+      <div class="footer-actions">
+        <button type="button" class="btn-ghost btn" id="cancelEdit">Cancel</button>
+        <button type="submit" class="btn">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ✅ ADD CARGO SUB-MODAL (for Edit Modal) -->
+<div class="modal" id="editAddCargoModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-card" style="max-width:400px;">
+    <div class="modal-header">
+      <div class="modal-title">Add New Cargo</div>
+      <button class="close-btn" id="closeEditAddCargoBtn">✖</button>
+    </div>
+
+    <form id="editAddCargoForm" novalidate>
+      <div class="field">
+        <label for="editNewCargoName">Cargo Name *</label>
+        <input id="editNewCargoName" name="cargo_reference" placeholder="Enter cargo name"
+          required style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" />
+      </div>
+
+      <div class="footer-actions" style="margin-top:15px;">
+        <button type="button" class="btn-ghost btn" id="cancelEditAddCargo">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -1,0 +1,5 @@
+Analyzing tank_inspection_review.dart...                        
+
+warning - The declaration '_showValidationDialog' isn't referenced - lib\screens\tank_inspection\components\tank_inspection_review.dart:31:8 - unused_element
+warning - The declaration '_isValidStatus' isn't referenced - lib\screens\tank_inspection\components\tank_inspection_review.dart:475:8 - unused_element
+

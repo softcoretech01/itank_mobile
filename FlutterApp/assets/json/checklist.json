@@ -1,0 +1,71 @@
+{
+  "sections": [
+    {
+      "sn": "1",
+      "job_id": "1",
+      "title": "Tank Body & Frame Condition",
+      "status": "",
+      "items": [
+        { "sn": "1.1", "title": "Body x 6 Sides & All Frame – No Dent / No Bent / No Deep Cut","sub_job_id": "1","comments": ""},
+        { "sn": "1.2", "title": "Cabin Door & Frame Condition – No Damage / Can Lock" },
+        { "sn": "1.3", "title": "Tank Number, Product & Hazchem Label – Not Missing or Tear" },
+        { "sn": "1.4", "title": "Condition of Paint Work & Cleanliness – Clean / No Bad Rust" },
+        { "sn": "1.5", "title": "Others" }
+      ]
+    },
+    {
+      "sn": "2",
+      "title": "Pipework & Installation",
+      "items": [
+        { "sn": "2.1", "title": "Pipework Supports / Brackets – Not Loose / No Bent" },
+        { "sn": "2.2", "title": "Pipework Joint & Welding – No Crack / No Icing / No Leaking" },
+        { "sn": "2.3", "title": "Earthing Point" },
+        { "sn": "2.4", "title": "PBU Support & Flange Connection – No Leak / Not Damage" },
+        { "sn": "2.5", "title": "Others" }
+      ]
+    },
+    {
+      "sn": "3",
+      "title": "Tank Instrument & Assembly",
+      "items": [
+        { "sn": "3.1", "title": "Safety Diverter Valve – Switching Lever" },
+        { "sn": "3.2", "title": "Safety Valves Connection & Joint – No Leaks" },
+        { "sn": "3.3", "title": "Level & Pressure Gauge Support Bracket, Connection & Joint – Not Loosen / No Leaks" },
+        { "sn": "3.4", "title": "Level & Pressure Gauge – Function Check" },
+        { "sn": "3.5", "title": "Level & Pressure Gauge Valve Open / Balance Valve Close" },
+        { "sn": "3.6", "title": "Data & CSC Plate – Not Missing / Not Damage" },
+        { "sn": "3.7", "title": "Others" }
+      ]
+    },
+    {
+      "sn": "4",
+      "title": "Valves Tightness & Operation",
+      "items": [
+        { "sn": "4.1", "title": "Valve Handwheel – Not Missing / Nut Not Loose" },
+        { "sn": "4.2", "title": "Valve Open & Close Operation – No Seizing / Not Tight / Not Jam" },
+        { "sn": "4.3", "title": "Valve Tightness Incl Glands – No Leak / No Icing / No Passing" },
+        { "sn": "4.4", "title": "Anchor Point" },
+        { "sn": "4.5", "title": "Others" }
+      ]
+    },
+    {
+      "sn": "5",
+      "title": "Before Departure Check",
+      "items": [
+        { "sn": "5.1", "title": "All Valves Closed – Defrost & Close Firmly" },
+        { "sn": "5.2", "title": "Caps fitted to Outlets or Cover from Dust if applicable" },
+        { "sn": "5.3", "title": "Security Seal Fitted by Refilling Plant - Check" },
+        { "sn": "5.4", "title": "Pressure Gauge – lowest possible" },
+        { "sn": "5.5", "title": "Level Gauge – Within marking or standard indication" },
+        { "sn": "5.6", "title": "Weight Reading – ensure within acceptance weight" },
+        { "sn": "5.7", "title": "Cabin Door Lock – Secure and prevent from sudden opening" },
+        { "sn": "5.8", "title": "Others" }
+      ]
+    },
+    {
+      "sn": "6",
+      "title": "Others Observation & Comment",
+      "items": []
+    }
+  ]
+}

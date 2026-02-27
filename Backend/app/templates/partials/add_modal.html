@@ -1,0 +1,204 @@
+<div class="modal" id="addModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Add Tank</div>
+      <button class="close-btn" id="closeAddBtn">✖</button>
+    </div>
+
+    <form id="addForm" novalidate>
+      <input type="hidden" id="add_tank_id" />
+
+      <!-- =================== TAB HEADERS =================== -->
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="tab-tank">Tank</button>
+        <button type="button" class="tab-btn" data-tab="tab-regulations">Regulations</button>
+        <button type="button" class="tab-btn" data-tab="tab-cargo">Cargo</button>
+        <button type="button" class="tab-btn" data-tab="tab-certificate">Certificate</button>
+        <button type="button" class="tab-btn" data-tab="tab-drawing">Drawing</button>
+        <button type="button" class="tab-btn" data-tab="tab-valve">Valve</button>
+      </div>
+
+      <!-- =================== TANK TAB =================== -->
+      <div class="tab-content active" id="tab-tank">
+        <h3 style="margin-bottom:15px;">Tank Basic Details</h3>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="add_tank_number">Tank Number *</label>
+            <input id="add_tank_number" name="tank_number" required />
+          </div>
+          <div class="field" style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="add_lease" name="lease" />
+            <label for="add_lease" style="margin:0;color:var(--muted);font-weight:600;font-size:13px;">Lease</label>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="add_mfgr">Manufacturer *</label><input id="add_mfgr" name="mfgr" required /></div>
+          <div class="field"><label for="add_date_mfg">Date MFG</label><input id="add_date_mfg" name="date_mfg" type="date" /></div>
+          <div class="field"><label for="add_pv_code">PV Code *</label><input id="add_pv_code" name="pv_code" required /></div>
+          <div class="field"><label for="add_un_iso_code">UN/ISO Code *</label><input id="add_un_iso_code" name="un_iso_code" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="add_capacity_l">Capacity (L) *</label><input id="add_capacity_l" name="capacity_l" type="number" step="0.01" min="0" required /></div>
+          <div class="field"><label for="add_mawp">MAWP (bar) *</label><input id="add_mawp" name="mawp" type="number" step="0.01" required /></div>
+          <div class="field"><label for="add_design_temperature">Design Temperature (°C)</label><input id="add_design_temperature" name="design_temperature" /></div>
+          <div class="field"><label for="add_tare_weight_kg">Tare Weight (kg) *</label><input id="add_tare_weight_kg" name="tare_weight_kg" type="number" step="0.01" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="add_mgw_kg">MGW (kg) *</label><input id="add_mgw_kg" name="mgw_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="add_mpl_kg">MPL (kg) *</label><input id="add_mpl_kg" name="mpl_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="add_size">ISO Size *</label><input id="add_size" name="size" required /></div>
+          <div class="field"><label for="add_pump_type">Pump Type *</label><input id="add_pump_type" name="pump_type" required /></div>
+        </div>
+
+        <div class="grid-4">
+          <div class="field"><label for="add_vesmat">Vessel Material *</label><input id="add_vesmat" name="vesmat" required /></div>
+          <div class="field"><label for="add_gross_kg">Gross Weight (kg) *</label><input id="add_gross_kg" name="gross_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="add_net_kg">Net Weight (kg) *</label><input id="add_net_kg" name="net_kg" type="number" step="0.01" required /></div>
+          <div class="field"><label for="add_color_body_frame">Body/Frame Color *</label><input id="add_color_body_frame" name="color_body_frame" required /></div>
+        </div>
+
+        <div class="field">
+          <label for="add_remark">Remarks</label>
+          <textarea id="add_remark" name="remark" rows="3"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="add_created_by">Created By (optional)</label>
+          <input id="add_created_by" name="created_by" />
+        </div>
+
+        <!-- ✅ Save Button for Tank -->
+        <div class="footer-actions" style="margin-top:15px; display:flex; justify-content:flex-end;">
+          <button type="submit" class="btn">💾 Save Tank</button>
+        </div>
+      </div>
+
+      <!-- =================== REGULATIONS TAB =================== -->
+      <div class="tab-content" id="tab-regulations">
+        <div class="toolbar" style="justify-content:flex-end;margin-bottom:10px;">
+          <button type="button" class="btn" id="btnNewRegFromTank">+ New Regulation</button>
+        </div>
+
+        <div class="field"><label for="tankNumberDisplay">Tank Number</label><input id="tankNumberDisplay" readonly style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;"></div>
+
+        <div class="field">
+          <label for="regulationSelect">Select Regulation</label>
+          <select id="regulationSelect" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <option value="">Choose a regulation</option>
+          </select>
+        </div>
+
+        <textarea id="regulationText" style="display:none;width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:10px;" rows="3" placeholder="Enter approval number or details..."></textarea>
+
+        <div class="footer-actions" style="margin-top:15px; display:flex; justify-content:flex-end;">
+          <button type="button" class="btn" id="btnSaveRegulation">💾 Save Regulation</button>
+        </div>
+
+        <h3 style="margin-top:20px;">Regulations Linked</h3>
+        <table class="table" id="regulationsTable" style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr><th>Regulation</th><th>Approval No</th><th>Actions</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- =================== CARGO TAB =================== -->
+      <div class="tab-content" id="tab-cargo">
+        <div class="toolbar" style="justify-content:flex-end;margin-bottom:10px;">
+          <button type="button" class="btn" id="btnNewCargo">+ New Cargo</button>
+        </div>
+
+        <div class="field"><label for="cargoTankNumber">Tank Number</label><input id="cargoTankNumber" readonly style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;"></div>
+
+        <div class="field">
+          <label for="cargoSelect">Select Cargo</label>
+          <select id="cargoSelect" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <option value="">Choose a cargo</option>
+          </select>
+        </div>
+
+        <div class="footer-actions" style="margin-top:10px;">
+          <button type="button" class="btn" id="btnSaveCargo">💾 Save Cargo Reference</button>
+        </div>
+
+        <h3 style="margin-top:20px;">Cargo References List</h3>
+        <table class="table" id="cargoTable" style="width:100%;border-collapse:collapse;">
+          <thead><tr><th>Cargo Reference</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="tab-content" id="tab-certificate">
+        <h3 style="margin-bottom:15px;">Tank Certification Details</h3>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="add_year_mfg">Year of Manufacturing *</label>
+            <input id="add_year_mfg" name="year_mfg" type="number" min="1900" max="2100" placeholder="e.g., 2021" readonly required />
+          </div>
+
+          <div class="field">
+            <label for="add_insp_date">2.5Y / 5.0Y Inspection Date *</label>
+            <input id="add_insp_date" name="insp_date" type="date" required />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field"><label for="add_next_insp_date">Next Inspection Date *</label><input id="add_next_insp_date" name="next_insp_date" type="date" required /></div>
+          <div class="field"><label for="add_tank_cert_no">Tank Certification Number *</label><input id="add_tank_cert_no" name="tank_cert_no" type="text" placeholder="Enter certificate number" required /></div>
+        </div>
+
+        <div class="field">
+          <label for="add_certificate_file">Upload Certificate (PDF / JPG / JPEG)</label>
+          <input id="add_certificate_file" name="certificate_file" type="file" accept=".pdf,.jpg,.jpeg" style="padding:8px;border:1px solid #ccc;border-radius:6px;width:100%;" />
+        </div>
+
+        <div class="footer-actions" style="margin-top:15px; display:flex; justify-content:flex-end;">
+          <button type="button" class="btn" id="btnSaveCertificate">💾 Save Certificate</button>
+        </div>
+
+        <div id="certificateStatus" style="margin-top:10px;color:var(--muted);font-size:14px;"></div>
+      </div>
+
+      <div class="tab-content" id="tab-drawing">
+        <h3 style="margin-bottom:15px;">Tank Drawing Upload</h3>
+
+        <div class="field">
+          <label for="add_drawing_file">Upload Drawing (PDF / JPG / JPEG)</label>
+          <input id="add_drawing_file" name="drawing_file" type="file" accept=".pdf,.jpg,.jpeg" style="padding:8px;border:1px solid #ccc;border-radius:6px;width:100%;" />
+        </div>
+
+        <div class="footer-actions" style="margin-top:15px;">
+          <button type="button" class="btn" id="btnUploadDrawing">📤 Upload Drawing</button>
+        </div>
+
+        <div id="drawingUploadStatus" style="margin-top:10px;color:var(--muted);font-size:14px;"></div>
+      </div>
+
+      <div class="tab-content" id="tab-valve">
+        <h3 style="margin-bottom:15px;">Valve Certificate Upload</h3>
+
+        <div class="field">
+          <label for="add_valve_file">Upload Valve Certificate (PDF / JPG / JPEG)</label>
+          <input id="add_valve_file" name="valve_file" type="file" accept=".pdf,.jpg,.jpeg" style="padding:8px;border:1px solid #ccc;border-radius:6px;width:100%;" />
+        </div>
+
+        <div class="footer-actions" style="margin-top:15px;">
+          <button type="button" class="btn" id="btnUploadValve">📤 Upload Valve Certificate</button>
+        </div>
+
+        <div id="valveUploadStatus" style="margin-top:10px;color:var(--muted);font-size:14px;"></div>
+      </div>
+
+      <div class="footer-actions" style="margin-top:20px;">
+        <button type="button" class="btn-ghost btn" id="cancelAdd">Cancel</button>
+      </div>
+
+    </form>
+  </div>
+</div>

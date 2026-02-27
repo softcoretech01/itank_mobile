@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tank Management</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+
+</head>
+<body>
+  <div class="container">
+    <h2>ISO Tank Management</h2>
+    <div class="toolbar">
+      <button class="btn" id="btnNewTank">+ New Tank</button>
+    </div>
+
+    <table class="table" id="tankTable">
+      <thead>
+        <tr>
+          <th>Tank Number</th>
+          <th>PV Code</th>
+          <th>UN/ISO Code</th>
+          <th>Capacity (L)</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  {% include 'partials/add_modal.html' %}
+  {% include 'partials/edit_modal.html' %}
+  {% include 'partials/reg_modal.html' %}
+
+  <script type="module" src="{{ url_for('static', path='/js/main.js') }}"></script>
+</body>
+</html>

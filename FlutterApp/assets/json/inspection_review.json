@@ -1,0 +1,462 @@
+{
+  "success": true,
+  "message": "Inspection review fetched",
+  "data": {
+    "inspection": {
+      "inspection_id": 1,
+      "inspection_date": "2025-11-27T06:49:16",
+      "report_number": "SG-T1-27112025-01",
+      "tank_id": 1,
+      "tank_number": "SMXU 8880704",
+      "status_id": 1,
+      "inspection_type_id": 1,
+      "location_id": 1,
+      "working_pressure": 21.4,
+      "design_temperature": -40,
+      "frame_type": "Frame T-2",
+      "cabinet_type": "-",
+      "mfgr": "SZHF",
+      "safety_valve_brand_id": 1,
+      "safety_valve_model_id": null,
+      "safety_valve_size_id": null,
+      "pi_next_inspection_date": "2025-07-01",
+      "notes": "",
+      "lifter_weight": "SMXU 8880704/SMXU 8880704_lifter_weight_8e6924f5ae624641a618f039310ce526.jpg",
+      "emp_id": null,
+      "operator_id": null,
+      "ownership": "owned",
+      "created_by": "27-11-2025",
+      "updated_by": "27-11-2025",
+      "lifter_weight_thumbnail": null,
+      "product": "Liquid Argon"
+    },
+"images": [
+      {
+        "id": 1,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 1,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_front_view_89d973f0e7eb430e835329e166e2ba4b.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 1,
+        "tank_id": 1
+      },
+      {
+        "id": 2,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 2,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_rear_view_a771af406b4a403ab24f1002c955fa9c.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 2,
+        "tank_id": 1
+      },
+      {
+        "id": 3,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 3,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_top_view_2b349b21d1984a0f80d13d65181a3c45.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 3,
+        "tank_id": 1
+      },
+      {
+        "id": 4,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 4,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_undersideview01_d758d62cc14b4aa696175669940ccb5e.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 4,
+        "tank_id": 1
+      },
+      {
+        "id": 5,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 15,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_undersideview02_b8d487d3ee4346e8800005eaa5126fb1.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 15,
+        "tank_id": 1
+      },
+      {
+        "id": 6,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 5,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_front_lh_view_db94344bb71647618e0e6520bbd5da2d.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 5,
+        "tank_id": 1
+      },
+      {
+        "id": 7,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 6,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_rear_lh_view_22c58e1aedb649ce8f2452b608cce641.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 6,
+        "tank_id": 1
+      },
+      {
+        "id": 8,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 7,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_front_rh_view_041daf8ab04b4e8e86afef397828ac2b.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 7,
+        "tank_id": 1
+      },
+      {
+        "id": 9,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 8,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_rear_rh_view_0f5d32d707c744448209eccf600916be.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 8,
+        "tank_id": 1
+      },
+      {
+        "id": 10,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 9,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_lh_side_view_9849f5a723804beda95b171e649cac36.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 9,
+        "tank_id": 1
+      },
+      {
+        "id": 11,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 10,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_rh_side_view_17eded88576b4754a4f9b9f1ba43418e.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 10,
+        "tank_id": 1
+      },
+      {
+        "id": 12,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 11,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_valves_section_view_f4ff157b609944979a1e8a804705713c.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 11,
+        "tank_id": 1
+      },
+      {
+        "id": 13,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 12,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_safety_valve_b8103fda40164b319028c806a7bbe39a.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 12,
+        "tank_id": 1
+      },
+      {
+        "id": 14,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 13,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_level___pressure_gauge_c7fdf7fdc70c4a72805c7f83d63226a6.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 13,
+        "tank_id": 1
+      },
+      {
+        "id": 15,
+        "emp_id": null,
+        "inspection_id": 1,
+        "image_id": 14,
+        "image_path": "SMAU 8888493/originals/SMAU 8888493_vacuum_reading_c30d6d1de32f4aa79adcf57585d2f886.png",
+        "thumbnail_path": null,
+        "created_date": null,
+        "created_at": "2025-11-26T11:01:02",
+        "updated_at": "2025-11-26T11:01:02",
+        "image_type_id": 14,
+        "tank_id": 1
+      }
+    ],
+    "inspection_checklist": [
+      {
+        "job_id": 1,
+        "title": "Tank Body & Frame Condition",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "1.1",
+            "title": "Body x 6 Sides & All Frame – No Dent / No Bent / No Deep Cut",
+            "comments": "tesr comment",
+            "sub_job_id": 1
+          },
+          {
+            "sn": "1.2",
+            "title": "Cabin Door & Frame Condition – No Damage / Can Lock",
+            "comments": "",
+            "sub_job_id": 2
+          },
+          {
+            "sn": "1.3",
+            "title": "Tank Number, Product & Hazchem Label – Not Missing or Tear",
+            "comments": "",
+            "sub_job_id": 3
+          },
+          {
+            "sn": "1.4",
+            "title": "Condition of Paint Work & Cleanliness – Clean / No Bad Rust",
+            "comments": "",
+            "sub_job_id": 4
+          },
+          {
+            "sn": "1.5",
+            "title": "Others",
+            "comments": "",
+            "sub_job_id": 5
+          }
+        ]
+      },
+      {
+        "job_id": 2,
+        "title": "Pipework & Installation",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "2.1",
+            "title": "Pipework Supports / Brackets – Not Loose / No Bent",
+            "comments": "",
+            "sub_job_id": 1
+          },
+          {
+            "sn": "2.2",
+            "title": "Pipework Joint & Welding – No Crack / No Icing / No Leaking",
+            "comments": "",
+            "sub_job_id": 2
+          },
+          {
+            "sn": "2.3",
+            "title": "Earthing Point",
+            "comments": "",
+            "sub_job_id": 3
+          },
+          {
+            "sn": "2.4",
+            "title": "PBU Support & Flange Connection – No Leak / Not Damage",
+            "comments": "",
+            "sub_job_id": 4
+          },
+          {
+            "sn": "2.5",
+            "title": "Others",
+            "comments": "",
+            "sub_job_id": 5
+          }
+        ]
+      },
+      {
+        "job_id": 3,
+        "title": "Tank Instrument & Assembly",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "3.1",
+            "title": "Safety Diverter Valve – Switching Lever",
+            "comments": "",
+            "sub_job_id": 1
+          },
+          {
+            "sn": "3.2",
+            "title": "Safety Valves Connection & Joint – No Leaks",
+            "comments": "",
+            "sub_job_id": 2
+          },
+          {
+            "sn": "3.3",
+            "title": "Level & Pressure Gauge Support Bracket, Connection & Joint – Not Loosen / No Leaks",
+            "comments": "",
+            "sub_job_id": 3
+          },
+          {
+            "sn": "3.4",
+            "title": "Level & Pressure Gauge – Function Check",
+            "comments": "",
+            "sub_job_id": 4
+          },
+          {
+            "sn": "3.5",
+            "title": "Level & Pressure Gauge Valve Open / Balance Valve Close",
+            "comments": "",
+            "sub_job_id": 5
+          },
+          {
+            "sn": "3.6",
+            "title": "Data & CSC Plate – Not Missing / Not Damage",
+            "comments": "",
+            "sub_job_id": 6
+          },
+          {
+            "sn": "3.7",
+            "title": "Others",
+            "comments": "",
+            "sub_job_id": 7
+          }
+        ]
+      },
+      {
+        "job_id": 4,
+        "title": "Valves Tightness & Operation",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "4.1",
+            "title": "Valve Handwheel – Not Missing / Nut Not Loose",
+            "comments": "",
+            "sub_job_id": 1
+          },
+          {
+            "sn": "4.2",
+            "title": "Valve Open & Close Operation – No Seizing / Not Tight / Not Jam",
+            "comments": "",
+            "sub_job_id": 2
+          },
+          {
+            "sn": "4.3",
+            "title": "Valve Tightness Incl Glands – No Leak / No Icing / No Passing",
+            "comments": "",
+            "sub_job_id": 3
+          },
+          {
+            "sn": "4.4",
+            "title": "Anchor Point",
+            "comments": "",
+            "sub_job_id": 4
+          },
+          {
+            "sn": "4.5",
+            "title": "Others",
+            "comments": "",
+            "sub_job_id": 5
+          }
+        ]
+      },
+      {
+        "job_id": 5,
+        "title": "Before Departure Check",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "5.1",
+            "title": "All Valves Closed – Defrost & Close Firmly",
+            "comments": "",
+            "sub_job_id": 1
+          },
+          {
+            "sn": "5.2",
+            "title": "Caps fitted to Outlets or Cover from Dust if applicable",
+            "comments": "",
+            "sub_job_id": 2
+          },
+          {
+            "sn": "5.3",
+            "title": "Security Seal Fitted by Refilling Plant - Check",
+            "comments": "",
+            "sub_job_id": 3
+          },
+          {
+            "sn": "5.4",
+            "title": "Pressure Gauge – lowest possible",
+            "comments": "",
+            "sub_job_id": 4
+          },
+          {
+            "sn": "5.5",
+            "title": "Level Gauge – Within marking or standard indication",
+            "comments": "",
+            "sub_job_id": 5
+          },
+          {
+            "sn": "5.6",
+            "title": "Weight Reading – ensure within acceptance weight",
+            "comments": "",
+            "sub_job_id": 6
+          },
+          {
+            "sn": "5.7",
+            "title": "Cabin Door Lock – Secure and prevent from sudden opening",
+            "comments": "",
+            "sub_job_id": 7
+          },
+          {
+            "sn": "5.8",
+            "title": "Others",
+            "comments": "",
+            "sub_job_id": 8
+          }
+        ]
+      },
+      {
+        "job_id": 6,
+        "title": "Others Observation & Comment",
+        "status_name": "OK",
+        "items": [
+          {
+            "sn": "6.1",
+            "title": "Other observations / general comments",
+            "comments": "",
+            "sub_job_id": 1
+          }
+        ]
+      }
+    ],
+    "to_do_list": []
+  }
+}

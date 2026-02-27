@@ -1,0 +1,144 @@
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models.inspection_valve_model import InspectionValve
+from typing import List, Optional
+from pydantic import BaseModel
+import jwt
+import os
+
+router = APIRouter()
+
+JWT_SECRET = os.getenv("JWT_SECRET", "change_this_in_production")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+
+def get_user_id(authorization: Optional[str] = Header(None)):
+    if not authorization:
+        return "Unknown"
+    
+    try:
+        token = authorization.replace("Bearer ", "").strip()
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return str(payload.get("emp_id") or payload.get("sub") or "Unknown")
+    except Exception:
+        return "Unknown"
+
+# STANDARD HYPHENS ONLY
+VALVE_FEATURES_LIST = [
+    "Top Fill - Gas", "Emergency Valve - A3", "S/V - 1",
+    "Iso - Top Fill", "Trycock - 1", "S/V - 2",
+    "Bottom fill - Liq", "Trycock - 2 / 3", "S/V - 3",
+    "Iso - Bottom Fill - A3", "Vacuum Valve", "S/V - 4",
+    "Iso - Top / Bottom", "T-Couple Valve", "S/V - B.Disc",
+    "Drain Valve", "T-Couple DV-6", "S/V Diverter",
+    "Blow Valve", "Liq Connection", "Line SRV - 1",
+    "PB Valve Inlet", "Gas Connection", "Line SRV - 2",
+    "PB Valve Return", "Vent Pipe", "Line SRV - 3",
+    "PB Unit", "Pipe / Support", "Line SRV - 4 / 5",
+    "Sample Valve", "Check Valve", "Out Ves B.Disc"
+]
+
+class ValveItem(BaseModel):
+    feature: str
+    status_id: int
+
+class ValveRequest(BaseModel):
+    tank_id: int
+    valves: List[ValveItem]
+
+STATUS_MAP = {
+    1: "OK",
+    2: "FAULTY",
+    3: "NA"
+}
+
+@router.get("/tank/{tank_id}")
+def get_valves(tank_id: int, db: Session = Depends(get_db)):
+    valves = db.query(InspectionValve).filter(InspectionValve.tank_id == tank_id).all()
+    return {
+        "tank_id": tank_id,
+        "valves": [
+            {
+                "feature": v.features,
+                "status_id": v.status_id,
+            }
+            for v in valves
+        ]
+    }
+
+@router.post("/create")
+def create_valves(
+    data: ValveRequest, 
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
+):
+    user_id = get_user_id(authorization)
+    response_valves = []
+    
+    for item in data.valves:
+        status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
+        new_valve = InspectionValve(
+            tank_id=data.tank_id,
+            features=item.feature,
+            status_id=item.status_id,
+            status=status_str,
+            created_by=user_id,
+            modified_by=user_id
+        )
+        db.add(new_valve)
+        
+        resp_item = item.dict()
+        resp_item['status'] = status_str
+        response_valves.append(resp_item)
+    
+    db.commit()
+    
+    return {
+        "tank_id": data.tank_id,
+        "valves": response_valves
+    }
+
+@router.post("/update")
+def update_valves(
+    data: ValveRequest, 
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
+):
+    user_id = get_user_id(authorization)
+    existing = db.query(InspectionValve).filter(InspectionValve.tank_id == data.tank_id).all()
+    existing_map = {v.features: v for v in existing}
+    
+    response_valves = []
+    
+    for item in data.valves:
+        status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
+        
+        if item.feature in existing_map:
+            record = existing_map[item.feature]
+            if record.status_id != item.status_id:
+                record.status_id = item.status_id
+                record.status = status_str
+            
+            record.modified_by = user_id
+            
+        else:
+            new_valve = InspectionValve(
+                tank_id=data.tank_id,
+                features=item.feature,
+                status_id=item.status_id,
+                status=status_str,
+                created_by=user_id,
+                modified_by=user_id
+            )
+            db.add(new_valve)
+            
+        resp_item = item.dict()
+        resp_item['status'] = status_str
+        response_valves.append(resp_item)
+
+    db.commit()
+    
+    return {
+        "tank_id": data.tank_id,
+        "valves": response_valves
+    }

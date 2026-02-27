@@ -1,0 +1,19 @@
+<div class="modal" id="regModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Add Regulation</div>
+      <button class="close-btn" id="closeRegBtn">✖</button>
+    </div>
+    <form id="regForm" novalidate>
+      <input type="hidden" id="reg_id" />
+      <div class="field">
+        <label for="reg_name">Regulation Name *</label>
+        <input id="reg_name" required />
+      </div>
+      <div class="footer-actions">
+        <button type="button" class="btn-ghost btn" id="cancelReg">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>

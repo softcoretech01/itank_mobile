@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:iso_tank/models/get_uploaded_mages_response.dart';
 import 'package:iso_tank/utils/constants.dart';
 import 'package:shimmer/shimmer.dart';
@@ -23,7 +22,6 @@ class UploadPhotosPage extends StatefulWidget {
 }
 
 class UploadPhotosPageState extends State<UploadPhotosPage> {
-  final ImagePicker _picker = ImagePicker();
   TankRepository? repo;
 
   List<UploadImageType> types = [];
@@ -53,10 +51,17 @@ class UploadPhotosPageState extends State<UploadPhotosPage> {
   }
 
 
+  /// Use a lower target size (150 KB) for inspection photos to speed up upload of many images.
+  static const int _inspectionPhotoTargetKb = 150;
+
   Future<void> pickPhoto(UploadImageType type) async {
     if (photos[type.imageTypeId]!.length >= type.count) return;
 
-    final File? file = await ImagePickerHelper.pickFromCamera(context);
+    final File? file = await ImagePickerHelper.pickFromCamera(
+      context,
+      targetKb: _inspectionPhotoTargetKb,
+      maxWidth: 1280,
+    );
     if (file != null) {
       setState(() {
         photos[type.imageTypeId]!.add(file);
@@ -182,8 +187,6 @@ class UploadPhotosPageState extends State<UploadPhotosPage> {
               itemCount: types.length,
               itemBuilder: (_, index) {
                 final t = types[index];
-                final imgs = photos[t.imageTypeId] ?? [];
-
                 final netImgs = networkPhotos[t.imageTypeId] ?? [];
                 final locImgs = photos[t.imageTypeId] ?? [];
 

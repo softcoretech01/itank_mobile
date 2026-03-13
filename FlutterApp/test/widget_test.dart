@@ -3,29 +3,17 @@
 // To perform an interaction with a widget in your test, use the WidgetTester
 // utility in the flutter_test package. For example, you can send tap and scroll
 // gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// tree, read text, and verify the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:iso_tank/main.dart';
-import 'package:iso_tank/repository/tank_repository.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(MyApp(isLoggedIn: false, repo: TankRepository(api: ApiClient(Dio()), dio: Dio()),));
+  testWidgets('App shows login page when not logged in', (WidgetTester tester) async {
+    await tester.pumpWidget(const MyApp(isLoggedIn: false));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('iTank'), findsOneWidget);
   });
 }

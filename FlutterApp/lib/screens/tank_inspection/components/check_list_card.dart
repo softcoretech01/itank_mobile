@@ -93,8 +93,7 @@ class ChecklistPageState extends State<ChecklistPage> {
                 itemStatus[savedItem.subJobId] = savedItem.statusId;
                 showCommentBox[savedItem.subJobId] =
                     savedItem.statusId == faultyId;
-                comments[savedItem.subJobId]!.text =
-                    (savedItem.comment ?? '').toString();
+                comments[savedItem.subJobId]!.text = savedItem.comment;
 
               }
             }
@@ -311,7 +310,7 @@ class ChecklistPageState extends State<ChecklistPage> {
               subJobId: int.tryParse(i.subJobId) ?? 1,
               statusId:
                   int.tryParse(itemStatus[i.subJobId] ?? '1') ?? 1,
-              comments: comments[i.subJobId]?.text?.trim() ?? "",
+              comments: (comments[i.subJobId]?.text ?? '').trim(),
 
             );
           }).toList(),

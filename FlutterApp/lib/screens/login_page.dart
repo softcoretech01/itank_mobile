@@ -45,6 +45,10 @@ class _LoginPageState extends State<LoginPage> {
 
       if (response.success == true) {
         await secureStorage.saveToken(response.data?.token ?? "");
+        await secureStorage.saveIsLoggedIn(true);
+        if (response.data != null) {
+          await secureStorage.saveLoginData(response.data);
+        }
 
         if (!mounted) return;
         Navigator.pushReplacement(

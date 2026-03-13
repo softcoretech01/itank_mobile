@@ -45,9 +45,10 @@ void main() async {
   final authRepo = AuthRepository(apiClient);
   WidgetsBinding.instance.addObserver(AppLifecycleHandler(authRepo));
 
-  // 🔥 Force logout on startup (User requirement)
-  // Check if there is an existing token and clear it to ensure clean state
-  await secureStorage.clear();
+  // Use local auth: if user was previously logged in, go straight to tank inspection
+  final isLoggedIn = await secureStorage.getIsLoggedIn();
+  final token = await secureStorage.getToken();
+  final shouldOpenTankInspection = isLoggedIn && (token != null && token.isNotEmpty);
 
   runApp(
     MultiBlocProvider(
@@ -57,7 +58,7 @@ void main() async {
         ),
       ],
       child: MyApp(
-        isLoggedIn: false, // Always force login
+        isLoggedIn: shouldOpenTankInspection,
       ),
     ),
   );

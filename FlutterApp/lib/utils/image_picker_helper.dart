@@ -9,8 +9,9 @@ import 'image_compression.dart';
 class ImagePickerHelper {
   static final ImagePicker _picker = ImagePicker();
 
-  /// Pick from camera → only request camera permission
-  static Future<File?> pickFromCamera(BuildContext context,{int targetKb = 300}) async {
+  /// Pick from camera → only request camera permission.
+  /// [targetKb] and [maxWidth] reduce file size for faster uploads.
+  static Future<File?> pickFromCamera(BuildContext context, {int targetKb = 300, int? maxWidth}) async {
     final granted = await PermissionUtils.requestCamera(context);
     if (!granted) return null;
 
@@ -24,6 +25,7 @@ class ImagePickerHelper {
     final compressed = await ImageCompression.compressToTarget(
       file,
       targetKb: targetKb,
+      maxWidth: maxWidth,
     );
     return compressed;
   }

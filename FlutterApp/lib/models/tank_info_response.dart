@@ -133,7 +133,7 @@ class CreatedTankInfoData {
       safetyValveModel: json['safety_valve_model']?.toString(),
       safetyValveSize: json['safety_valve_size']?.toString(),
 
-      piNextInspectionDate: json['pi_next_inspection_date']?.toString(),
+      piNextInspectionDate: json['next_inspection_date']?.toString(),
       notes: json['notes']?.toString(),
       lifterWeight: json['lifter_weight']?.toString(),
 

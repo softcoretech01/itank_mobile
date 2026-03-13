@@ -165,7 +165,7 @@ class Inspection {
     safetyValveModelId: json["safety_valve_model_id"],
     safetyValveSizeId: json["safety_valve_size_id"],
 
-    piNextInspectionDate: json["pi_next_inspection_date"]?.toString(),
+    piNextInspectionDate: json["next_inspection_date"]?.toString(),
     ownership: json["ownership"]?.toString() ?? "",
     notes: json["notes"]?.toString(),
 

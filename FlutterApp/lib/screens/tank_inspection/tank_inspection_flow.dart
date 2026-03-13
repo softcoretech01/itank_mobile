@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:easy_stepper/easy_stepper.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:iso_tank/models/validation_response.dart';
@@ -17,7 +17,7 @@ import 'package:iso_tank/screens/login_page.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/snack_bar_helper.dart';
 import 'components/check_list_card.dart';
-import 'components/tank_info page.dart';
+import 'components/tank_info_page.dart';
 import 'components/tank_inspection_review.dart';
 import 'components/todo_page.dart';
 import 'components/upload_photos_page.dart';
@@ -182,7 +182,46 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
 
             EasyStep(icon: Icon(Icons.check_circle_outline), title: 'Review & Submit'),
           ];
-          return Scaffold(
+          return PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (bool didPop, dynamic result) async {
+              if (didPop) return;
+              final step = state.activeStep ?? 0;
+              final stepsLength = steps.length;
+
+              // Tank Info (step 0): confirm exit
+              if (step == 0) {
+                final shouldExit = await _showExitConfirmation(context);
+                if (shouldExit == true && context.mounted) {
+                  SystemNavigator.pop();
+                }
+                return;
+              }
+
+              // Upload Photos → Tank Info
+              if (step == 1) {
+                context.read<TankInspectionBloc>().add(GoToStepEvent(0));
+                return;
+              }
+
+              // Checklist → Upload Photos
+              if (step == 2) {
+                context.read<TankInspectionBloc>().add(GoToStepEvent(1));
+                return;
+              }
+
+              // Todo or Review (step 3 when no Todo) → Checklist
+              if (step == 3) {
+                context.read<TankInspectionBloc>().add(GoToStepEvent(2));
+                return;
+              }
+
+              // Review & Submit (step 4 when Todo shown) → Todo / Checklist
+              if (step == stepsLength - 1 && step >= 3) {
+                context.read<TankInspectionBloc>().add(GoToStepEvent(step - 1));
+              }
+            },
+            child: Scaffold(
             appBar: AppBar(
               title: const Text("Tank Inspection"),
               actions: [
@@ -379,13 +418,10 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
               ),
             ),
 
-            body: Column(
+            body: Stack(
               children: [
-
-                if (state.uploadPhotos.uploading) ...[
-                  LinearProgressIndicator(value: state.uploadPhotos.progress),
-                  Text("${(state.uploadPhotos.progress * 100).toStringAsFixed(0)}%"),
-                ],
+                Column(
+                  children: [
 
                 // ------------------- STEPPER --------------------
                 EasyStepper(
@@ -485,10 +521,86 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
                   )
                 ]
 
+                  ],
+                ),
+
+                // Upload overlay: full-screen loader when uploading images
+                if (state.uploadPhotos.uploading)
+                  Positioned.fill(
+                    child: Material(
+                      color: Colors.black54,
+                      child: Center(
+                        child: Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(height: 20),
+                                const Text(
+                                  'Images uploading, please wait...',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  '${(state.uploadPhotos.progress * 100).toStringAsFixed(0)}%',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (photoCount > 0) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Uploading $photoCount image${photoCount == 1 ? '' : 's'}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
+          ),
           );
         });
+  }
+
+  /// Shows exit confirmation when on Tank Info and user presses back. Returns true if user chose to exit.
+  Future<bool?> _showExitConfirmation(BuildContext context) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Close application?'),
+        content: const Text(
+          'Do you want to close the application? Unsaved changes may be lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// ------------------- PAGE 1: TANK INFO -------------------
@@ -606,7 +718,7 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
       allReasons.addAll(
           issues.inspection!
               .where((e) => e.reason != null && e.reason!.isNotEmpty)
-              .map((e) => e.reason!)
+              .map((e) => e.field! + " : " + e.reason!)
       );
     }
 

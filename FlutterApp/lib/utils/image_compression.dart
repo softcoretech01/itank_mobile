@@ -7,7 +7,8 @@ import 'package:path_provider/path_provider.dart';
 class ImageCompression {
   /// Compress to target KB (approx). Returns compressed File or original on failure.
 
-  static Future<File?> compressToTarget(File file, {int targetKb = 300}) async {
+  /// [maxWidth] caps the longest side to reduce file size (e.g. 1280 for inspection photos).
+  static Future<File?> compressToTarget(File file, {int targetKb = 300, int? maxWidth}) async {
     try {
       final dir = await getTemporaryDirectory();
       String targetPath = p.join(
@@ -19,12 +20,21 @@ class ImageCompression {
       File? finalFile;
 
       while (quality >= 25) {
-        final XFile? compressedXFile = await FlutterImageCompress.compressAndGetFile(
-          file.absolute.path,
-          targetPath,
-          quality: quality,
-          format: CompressFormat.jpeg,
-        );
+        final XFile? compressedXFile = maxWidth != null
+            ? await FlutterImageCompress.compressAndGetFile(
+                file.absolute.path,
+                targetPath,
+                quality: quality,
+                format: CompressFormat.jpeg,
+                minWidth: maxWidth,
+                minHeight: maxWidth,
+              )
+            : await FlutterImageCompress.compressAndGetFile(
+                file.absolute.path,
+                targetPath,
+                quality: quality,
+                format: CompressFormat.jpeg,
+              );
 
         if (compressedXFile == null) break;
 

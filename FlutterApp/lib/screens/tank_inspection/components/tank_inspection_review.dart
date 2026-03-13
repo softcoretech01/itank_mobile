@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:iso_tank/bloc/tank_inspection/tank_inspection_bloc.dart';
 
 import '../../../models/tank_inspection_response.dart';
-import '../../../models/validation_response.dart';
 import '../../../utils/constants.dart';
 
 class TankInspectionReviewPage extends StatefulWidget {
@@ -26,96 +25,6 @@ class TankInspectionReviewPageState extends State<TankInspectionReviewPage> {
     print("Loading review data");
 
     context.read<TankInspectionBloc>().add(LoadReviewEvent());
-  }
-
-  void _showValidationDialog(BuildContext context, ValidationResponse response) {
-    if (response.success != true) {
-      // Error dialog
-      final validationIssues = response.data?.issues;
-      final checklistIssues = validationIssues?.checklist ?? [];
-      final imageIssues = validationIssues?.images ?? [];
-      final todoIssues = validationIssues?.toDoList ?? [];
-      final inspectionIssues = validationIssues?.inspection ?? [];
-
-      final messages = <String>[];
-
-      if (checklistIssues.isNotEmpty) {
-        messages.add('Checklist not completed');
-      }
-      if (imageIssues.isNotEmpty) {
-        for (var issue in imageIssues) {
-          final reason = issue.reason;
-          if (reason != null && reason.contains('insufficient images')) {
-            final match = RegExp(r'found (\d+), expected (\d+)').firstMatch(reason);
-            if (match != null) {
-              messages.add('Insufficient images (${match.group(1)} / ${match.group(2)})');
-            } else {
-              messages.add(reason);
-            }
-          } else if (reason != null) {
-            messages.add(reason);
-          }
-          // Handle missing images
-          if (issue.missing != null) {
-            for (var missing in issue.missing!) {
-              messages.add('Missing image: ${missing.imageType}');
-            }
-          }
-        }
-      }
-      if (todoIssues.isNotEmpty) {
-        for (var issue in todoIssues) {
-          if (issue.reason != null) {
-            messages.add(issue.reason!);
-          }
-        }
-      }
-      for (var issue in inspectionIssues) {
-        if (issue.reason != null) {
-          messages.add(issue.reason!);
-        }
-      }
-
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text("Cannot Submit Inspection"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: messages.map((msg) => Text('• $msg')).toList(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("OK"),
-            ),
-          ],
-        ),
-      );
-    } else {
-      // Success, show confirmation
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text("Confirm Submission"),
-          content: const Text("Once submitted, data of this inspection cannot be edited.\nDo you want to continue?"),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Back"),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                context.read<TankInspectionBloc>().add(SubmitInspectionEvent());
-              },
-              child: const Text("OK"),
-            ),
-          ],
-        ),
-      );
-    }
   }
 
   @override
@@ -232,9 +141,7 @@ class TankInspectionReview extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            const SizedBox(height: 200),
-
-            const SizedBox(height: 200),
+            const SizedBox(height: 80),
 
           ],
         ),
@@ -285,6 +192,8 @@ class TankInspectionReview extends StatelessWidget {
           children: fields.entries.map((e) {
             final value = e.value?.toString().trim();
             final displayValue = (value == null || value.isEmpty) ? "-" : value;
+            print("e.key => ${e.key}");
+            print("displayValue => $displayValue");
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
@@ -329,27 +238,90 @@ class TankInspectionReview extends StatelessWidget {
       itemCount: images?.length ?? 0,
       itemBuilder: (ctx, i) {
         String fullPath = images?[i].imagePath ?? "";
+        // Use same full URL in grid and preview so preview displays the same image
+        String imageUrl = fullPath.isEmpty ? "" : "$IMAGE_BASE_URL$fullPath";
 
         return GestureDetector(
-          onTap: () => _openFullImage(context, fullPath),
+          onTap: () => _openFullImage(context, imageUrl),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: Image.network("$IMAGE_BASE_URL$fullPath", fit: BoxFit.cover),
+            child: _reviewNetworkImage(imageUrl),
           ),
         );
       },
     );
   }
 
-  void _openFullImage(BuildContext context, String image) {
+  /// Network image with placeholder on load failure and loading state.
+  Widget _reviewNetworkImage(String imageUrl) {
+    if (imageUrl.isEmpty) {
+      return _imagePlaceholder();
+    }
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          color: Colors.grey[200],
+          child: const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) => _imagePlaceholder(),
+    );
+  }
+
+  Widget _imagePlaceholder() {
+    return Container(
+      color: Colors.grey[300],
+      child: const Center(
+        child: Icon(Icons.broken_image_outlined, size: 40, color: Colors.grey),
+      ),
+    );
+  }
+
+  /// Opens full-screen preview using the same [imageUrl] shown in the grid.
+  void _openFullImage(BuildContext context, String imageUrl) {
+    if (imageUrl.isEmpty) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => Scaffold(
           backgroundColor: Colors.black,
-          appBar: AppBar(backgroundColor: Colors.black),
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            iconTheme: const IconThemeData(color: Colors.white),
+          ),
           body: Center(
-            child: InteractiveViewer(child: Image.network(image)),
+            child: InteractiveViewer(
+              child: Image.network(
+                imageUrl,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return const Center(
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      size: 64,
+                      color: Colors.white54,
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
@@ -470,12 +442,6 @@ class TankInspectionReview extends StatelessWidget {
       backgroundColor: bgColor,
       labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
     );
-  }
-
-  bool _isValidStatus(String? status) {
-    if (status == null) return false;
-    String lower = status.toLowerCase();
-    return lower == "ok" || lower == "na";
   }
 
 }

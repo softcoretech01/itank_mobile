@@ -5,7 +5,7 @@ import '../models/tank_model.dart';
 import '../repository/tank_repository.dart';
 import '../service/ApiClient.dart';
 import '../service/DioProvider.dart';
-
+import '../utils/tank_search.dart';
 
 class TankSelectionPage extends StatefulWidget {
   final String userName;
@@ -82,9 +82,10 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
                 Text(
                   "Hi, ${widget.userName} 👋",
                   style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white),
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
 
                 const SizedBox(height: 8),
@@ -103,8 +104,10 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
                   onTap: () => openTankBottomSheet(context),
                   child: Container(
                     width: double.infinity,
-                    padding:
-                    const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                      horizontal: 14,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(12),
@@ -139,7 +142,6 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
 
                 const Spacer(),
 
-
                 /// PROCEED BUTTON
                 SizedBox(
                   width: double.infinity,
@@ -154,13 +156,12 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
 
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => TankInspectionFlow(),
-                        ),
+                        MaterialPageRoute(builder: (_) => TankInspectionFlow()),
                       );
 
                       print(
-                          "Selected Tank ID: ${selectedTank!.tankId} | ${selectedTank!.tankNumber}");
+                        "Selected Tank ID: ${selectedTank!.tankId} | ${selectedTank!.tankNumber}",
+                      );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
@@ -231,10 +232,14 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
                       controller: searchCtrl,
                       onChanged: (value) {
                         setSheetState(() {
+                          final query = normalizeTankSearch(value);
+                          if (query.isEmpty) {
+                            tempList = List.from(allTanks);
+                            return;
+                          }
+
                           tempList = allTanks
-                              .where((tank) => tank.tankNumber!
-                              .toLowerCase()
-                              .contains(value.toLowerCase()))
+                              .where((tank) => tankMatchesSearch(tank, query))
                               .toList();
                         });
                       },
@@ -252,24 +257,33 @@ class _TankSelectionPageState extends State<TankSelectionPage> {
 
                   /// LIST OF TANKS (API)
                   Expanded(
-                    child: ListView.builder(
-                      itemCount: tempList.length,
-                      itemBuilder: (context, index) {
-                        final tank = tempList[index];
+                    child: tempList.isEmpty
+                        ? const Center(
+                            child: Text(
+                              "No tanks found",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: tempList.length,
+                            itemBuilder: (context, index) {
+                              final tank = tempList[index];
 
-                        return ListTile(
-                          title: Text(tank.tankNumber ?? ""),
-                          trailing: selectedTank?.tankId == tank.tankId
-                              ? const Icon(Icons.check_circle,
-                              color: Colors.blue)
-                              : null,
-                          onTap: () {
-                            setState(() => selectedTank = tank);
-                            Navigator.pop(context);
-                          },
-                        );
-                      },
-                    ),
+                              return ListTile(
+                                title: Text(tank.tankNumber ?? ""),
+                                trailing: selectedTank?.tankId == tank.tankId
+                                    ? const Icon(
+                                        Icons.check_circle,
+                                        color: Colors.blue,
+                                      )
+                                    : null,
+                                onTap: () {
+                                  setState(() => selectedTank = tank);
+                                  Navigator.pop(context);
+                                },
+                              );
+                            },
+                          ),
                   ),
                 ],
               ),
@@ -300,10 +314,6 @@ class _WaveClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(_) => false;
 }
-
-
-
-
 
 /*class TankSelectionPage extends StatelessWidget {
   final String userName;

@@ -967,11 +967,12 @@ def add_contact_sheet_slide(prs, tank_number, report_no, start_page_num, image_i
 # MAIN GENERATOR
 # ---------------------------------------------------------------------------
 
-def resolve_product_name(db: Session, insp: dict | None, cargos) -> str:
+def resolve_product_name(db: Session, insp: dict | None, d: TankDetails | None, cargos) -> str:
     """
     Resolve product name with priority:
     1) inspection.product / product_id
-    2) last cargo product
+    2) TankDetails.product_id
+    3) last cargo product
     """
     # --- 1. Inspection-based ---
     if insp:
@@ -986,7 +987,7 @@ def resolve_product_name(db: Session, insp: dict | None, cargos) -> str:
                 if str(raw).isdigit():
                     prod = (
                         db.query(ProductMaster)
-                        .filter(ProductMaster.product_id == int(raw))
+                        .filter(ProductMaster.id == int(raw))
                         .first()
                     )
                     if prod:
@@ -996,11 +997,58 @@ def resolve_product_name(db: Session, insp: dict | None, cargos) -> str:
             except Exception:
                 pass
 
-    # --- 2. Cargo-based (LAST CARGO – reference behaviour) ---
+    # --- 2. TankDetails-based ---
+    if d and d.product_id:
+        try:
+            prod = (
+                db.query(ProductMaster)
+                .filter(ProductMaster.id == d.product_id)
+                .first()
+            )
+            if prod:
+                return prod.product_name
+        except Exception:
+            pass
+
+    # --- 3. Cargo-based (LAST CARGO – reference behaviour) ---
     if cargos:
         _, cargo_master = cargos[-1]
         if hasattr(cargo_master, "product_name") and cargo_master.product_name:
             return cargo_master.product_name
+
+    return "-"
+
+
+def resolve_safety_valve_name(db: Session, insp: dict | None, d: TankDetails | None) -> str:
+    """
+    Resolve safety valve brand name with priority:
+    1) inspection joined name
+    2) TankDetails.safety_valve_brand_id lookup
+    """
+    # 1. Check inspection joined name (if it was joined)
+    if insp:
+        joined = insp.get("safety_valve_brand_name")
+        if joined and joined not in (None, "", "-"):
+            return str(joined)
+
+    # 2. Check TankDetails fallback
+    if d and d.safety_valve_brand_id:
+        try:
+            brand = (
+                db.query(SafetyValveBrand)
+                .filter(SafetyValveBrand.id == d.safety_valve_brand_id)
+                .first()
+            )
+            if brand:
+                return brand.brand_name
+        except Exception:
+            pass
+
+    # 3. Check inspection raw id
+    if insp:
+        raw = insp.get("safety_valve_brand_id") or insp.get("safety_valve_brand")
+        if raw and raw not in (None, "", "-"):
+            return str(raw)
 
     return "-"
 
@@ -1022,11 +1070,10 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     if not tank or not d:
         raise ValueError("Tank Details not found")
 
-    # Regulations (with multiple_regulation)
+    # Regulations (from multiple_regulation)
     regs = (
-        db.query(TankRegulation, MultipleRegulation)
-        .outerjoin(MultipleRegulation, MultipleRegulation.reg_id == TankRegulation.id)
-        .filter(TankRegulation.tank_id == tank_id)
+        db.query(MultipleRegulation)
+        .filter(MultipleRegulation.tank_id == tank_id)
         .all()
     )
 
@@ -1044,7 +1091,7 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     # New Image Data Sources
     # New Image Data Sources
     valve_and_shell_record = db.query(TankValveAndShell).filter(TankValveAndShell.tank_id == tank_id).first()
-    others_rows = db.query(TankOtherImage).filter(TankOtherImage.tank_id == tank_id).all()
+    others_rows = db.query(TankOtherImage).filter(TankOtherImage.tank_id == d.id).all()
     
     # Checklist Data
     insp_valves = db.query(InspectionValve).filter(InspectionValve.tank_id == tank_id).all()
@@ -1059,13 +1106,9 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
             """
             SELECT 
                 ti.*, 
-                it.inspection_type_name, 
-                pm.product_name,
-                sb.brand_name AS safety_valve_brand_name
+                it.inspection_type_name
             FROM tank_inspection_details ti
             LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
-            LEFT JOIN product_master pm ON ti.product_id = pm.id
-            LEFT JOIN safety_valve_brand sb ON ti.safety_valve_brand_id = sb.id
             WHERE ti.inspection_id = :iid AND ti.tank_id = :tid
             """
         )
@@ -1075,13 +1118,9 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
             """
             SELECT 
                 ti.*, 
-                it.inspection_type_name, 
-                pm.product_name,
-                sb.brand_name AS safety_valve_brand_name
+                it.inspection_type_name
             FROM tank_inspection_details ti
             LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
-            LEFT JOIN product_master pm ON ti.product_id = pm.id
-            LEFT JOIN safety_valve_brand sb ON ti.safety_valve_brand_id = sb.id
             WHERE ti.tank_id = :tid OR ti.tank_number = :tn
             ORDER BY ti.inspection_date DESC
             LIMIT 1
@@ -1105,10 +1144,11 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
         try:
             sql_chk = text(
                 """
-                SELECT job_name, sub_job_description, status, comment
-                FROM inspection_checklist
-                WHERE inspection_id = :iid
-                ORDER BY id ASC
+                SELECT ic.job_name, ic.sub_job_description, COALESCE(ic.status, ist.status_name, '-') as status, ic.comment
+                FROM inspection_checklist ic
+                LEFT JOIN inspection_status ist ON ic.status_id = ist.status_id
+                WHERE ic.inspection_id = :iid
+                ORDER BY ic.sub_job_id ASC
                 """
             )
             checklist_data = db.execute(sql_chk, {"iid": iid}).fetchall()
@@ -1123,10 +1163,11 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
         try:
             sql_todo = text(
                 """
-                SELECT job_name, sub_job_description, status, comment
-                FROM to_do_list
-                WHERE inspection_id = :iid
-                ORDER BY id ASC
+                SELECT t.job_name, t.sub_job_description, COALESCE(ist.status_name, 'Faulty') as status, t.comment
+                FROM to_do_list t
+                LEFT JOIN inspection_status ist ON t.status_id = ist.status_id
+                WHERE t.inspection_id = :iid
+                ORDER BY t.created_at ASC
                 """
             )
             todo_data = db.execute(sql_todo, {"iid": iid}).fetchall()
@@ -1263,16 +1304,8 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     # -------------------------------
     # Resolve Product & Safety Valve
     # -------------------------------
-    product_name = resolve_product_name(db, insp, cargos)
-
-    safety_valve_name = "-"
-    if insp:
-        # Try joined name first
-        safety_valve_name = insp.get("safety_valve_brand_name") or "-"
-        if safety_valve_name == "-":
-            # Just show ID if name missing
-            raw_sv = insp.get("safety_valve_brand_id") or insp.get("safety_valve_brand")
-            if raw_sv: safety_valve_name = str(raw_sv)
+    product_name = resolve_product_name(db, insp, d, cargos)
+    safety_valve_name = resolve_safety_valve_name(db, insp, d)
 
     # Convert dates
     date_formatted = format_value(insp["inspection_date"]) if insp else "-"
@@ -1320,7 +1353,9 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     
     # Vacuum Reading -> from tank_inspection_details (insp dict)
     vac_val = insp.get("vacuum_reading") if insp else "-"
-    set_cell(6, 2, "Vacuum Reading", vac_val or "-")
+    vac_uom = insp.get("vacuum_uom") if insp else ""
+    vac_display = f"{vac_val} {vac_uom}".strip() if vac_val and vac_val != "-" else vac_val or "-"
+    set_cell(6, 2, "Vacuum Reading", vac_display)
 
     # Row 7
     set_cell(7, 0, "Tare Kg", format_value(d.tare_weight_kg))
@@ -1347,7 +1382,7 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     set_cell(11, 2, "Approved By / Date", f"{d.updated_by or '-'} / {appr_date}")
 
     # Row 12 - Applicable Regulation (Merged)
-    reg_names = [r.regulation_name for t, r in regs if r]
+    reg_names = [r.regulation_name for r in regs if r.regulation_name]
     reg_str = ", ".join(reg_names) if reg_names else "-"
     
     # We already created blank cells in add_table, now merge and fill
@@ -1374,7 +1409,7 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
 
     # Row 13 - Cargo Reference (Merged) showing UN Codes
     c_cargo_lbl = table.cell(13, 0)
-    c_cargo_lbl.text = "Cargo Reference"
+    c_cargo_lbl.text = "UN Code"
     c_cargo_lbl.fill.solid()
     c_cargo_lbl.fill.fore_color.rgb = COLOR_LABEL_BG
     p = c_cargo_lbl.text_frame.paragraphs[0]
@@ -1405,16 +1440,24 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     curr_page = 2
     
     # Slide 2: Valves Checklist
+    # Use features directly from the database records
+    db_valve_features = [v.features for v in insp_valves]
+    valve_map = {v.features: v.status_id for v in insp_valves}
+
     add_checklist_slide(
         prs, tank.tank_number, report_no, curr_page,
-        VALVE_FEATURES, valve_map, ["Valves", "Valves", "Valves"]
+        db_valve_features, valve_map, ["Valves", "Valves", "Valves"]
     )
     curr_page += 1
     
     # Slide 3: Gauges Checklist
+    # Use features directly from the database records
+    db_gauge_features = [g.features for g in insp_gauges]
+    gauge_map = {g.features: g.status_id for g in insp_gauges}
+
     add_checklist_slide(
         prs, tank.tank_number, report_no, curr_page,
-        GAUGE_FEATURES, gauge_map, ["Gauge / Pump", "Label / Decal", "Body / Frame"]
+        db_gauge_features, gauge_map, ["Gauge / Pump", "Label / Decal", "Body / Frame"]
     )
     curr_page += 1
 
@@ -1536,18 +1579,18 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
     # 3. Add certificate images
     if certs:
         cert = certs[0]
-        if cert.periodic_inspection_image_path:
-            key = get_image_key(cert.periodic_inspection_image_path, tank.tank_number, base_dir)
+        if hasattr(cert, "periodic_inspection_pdf_path") and cert.periodic_inspection_pdf_path:
+            key = get_image_key(cert.periodic_inspection_pdf_path, tank.tank_number, base_dir)
             seen_paths.add(key)
-            resolved = resolve_path(cert.periodic_inspection_image_path, tank.tank_number, base_dir)
+            resolved = resolve_path(cert.periodic_inspection_pdf_path, tank.tank_number, base_dir)
             if resolved:
                 resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
                 seen_paths.add(resolved_key)
 
-        if cert.next_insp_image_path:
-            key = get_image_key(cert.next_insp_image_path, tank.tank_number, base_dir)
+        if hasattr(cert, "next_insp_pdf_path") and cert.next_insp_pdf_path:
+            key = get_image_key(cert.next_insp_pdf_path, tank.tank_number, base_dir)
             seen_paths.add(key)
-            resolved = resolve_path(cert.next_insp_image_path, tank.tank_number, base_dir)
+            resolved = resolve_path(cert.next_insp_pdf_path, tank.tank_number, base_dir)
             if resolved:
                 resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
                 seen_paths.add(resolved_key)
@@ -1583,58 +1626,11 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
                 resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
                 seen_paths.add(resolved_key)
     
-    # --- SLIDE 12: Tank Number Image ---
-    # Start fresh tracking for this section to strictly enforce new sources
+    # --- SLIDES 12-14 REMOVED AS PER REQUEST ---
+    # Start fresh tracking for remaining dynamic slides
     slides_12_18_seen = set()
-    print(f"DEBUG: Slide 12 start. Path: {d.tank_number_image_path}")
 
-    if d.tank_number_image_path:
-        curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            f"{tank.tank_number} – Tank Condition",  # Slide Title
-            f"Tank Number – {tank.tank_number}",     # Top Bar
-            "Tank Date Plate",                       # Bottom Bar
-            d.tank_number_image_path, base_dir, exclude_paths=slides_12_18_seen
-        )
 
-    # --- SLIDE 13: Periodic Inspection Image ---
-    date_val = certs[0].insp_2_5y_date if certs and certs[0].insp_2_5y_date else "-"
-    path_val = certs[0].periodic_inspection_image_path if certs else None
-    if path_val:
-        # Format date for header
-        date_str = format_value(date_val) # e.g. 18-Dec-2025 or similar
-        # Reference shows "08 / 23". format_value does "18-Dec-2025".
-        # Let's try to match "MM / YY" if it's a date object, else string.
-        if isinstance(date_val, (date, datetime)):
-            date_fmt = date_val.strftime("%m / %y")
-        else:
-            date_fmt = str(date_val)
-            
-        curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            f"{tank.tank_number} – Tank Condition",
-            f"Periodic Inspection – {date_fmt}",
-            "Tank Date Plate",
-            path_val, base_dir, exclude_paths=slides_12_18_seen
-        )
-
-    # --- SLIDE 14: CSC Next Exam Date Image ---
-    date_csc = certs[0].next_insp_date if certs and certs[0].next_insp_date else "-"
-    path_csc = certs[0].next_insp_image_path if certs else None
-    print(f"DEBUG: Slide 14 CSC. Path: {path_csc}")
-    if path_csc:
-        if isinstance(date_csc, (date, datetime)):
-            date_fmt = date_csc.strftime("%m / %y")
-        else:
-            date_fmt = str(date_csc)
-
-        curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            f"{tank.tank_number} – Tank Condition",
-            f"CSC Next Exam Date – {date_fmt}",
-            "Tank Date Plate",
-            path_csc, base_dir, exclude_paths=slides_12_18_seen
-        )
 
     # --- SLIDE 15: Tank Valve Label (Full Page) ---
     if valve_and_shell_record and valve_and_shell_record.valve_label_image_path:
@@ -1646,37 +1642,28 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
             valve_and_shell_record.valve_label_image_path, base_dir, exclude_paths=slides_12_18_seen
         )
 
-    # --- SLIDE 16 (Dynamic): Tank Certificate File ---
-    if certs and certs[0].certificate_file:
-         curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            "Tank Certificate",                    # Slide Title
-            "Tank Certificate",                    # Top Bar
-            "",                                    # Bottom Bar (Optional)
-            certs[0].certificate_file, base_dir, exclude_paths=slides_12_18_seen
-        )
     
     # --- SLIDE 17 (Dynamic): P&ID and GA Drawings ---
     if drawings:
         dwg = drawings[0]
-        # P&ID Slide
-        if dwg.pid_image_path:
+        # P&ID Drawing Slide
+        if hasattr(dwg, "pid_drawing") and dwg.pid_drawing:
              curr_page = add_full_page_image_slide(
                 prs, tank.tank_number, report_no, curr_page,
                 "Tank P&ID",                           # Slide Title
                 "P&ID",                                # Top Bar
                 dwg.pid_reference or "",               # Bottom Bar
-                dwg.pid_image_path, base_dir, exclude_paths=slides_12_18_seen
+                dwg.pid_drawing, base_dir, exclude_paths=slides_12_18_seen
             )
         
         # GA Drawing Slide
-        if dwg.ga_image_path:
+        if hasattr(dwg, "ga_drawing_file") and dwg.ga_drawing_file:
              curr_page = add_full_page_image_slide(
                 prs, tank.tank_number, report_no, curr_page,
                 "Tank GA Drawing",                     # Slide Title
                 "General Arrangement",                 # Top Bar
                 dwg.ga_drawing or "",                  # Bottom Bar
-                dwg.ga_image_path, base_dir, exclude_paths=slides_12_18_seen
+                dwg.ga_drawing_file, base_dir, exclude_paths=slides_12_18_seen
             )
 
     # --- SLIDE 18: Tank Frame & Outer Shell (Full Page) ---
@@ -1689,9 +1676,7 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
             valve_and_shell_record.tank_frame_image_path, base_dir, exclude_paths=slides_12_18_seen
         )
 
-    # --- LAST SLIDE: Other Tank Images (Contact Sheet) ---
-    ot_imgs = [{"path": x.image_path, "label": x.image_name} for x in others_rows if x.image_path]
-    curr_page = add_contact_sheet_slide(prs, tank.tank_number, report_no, curr_page, ot_imgs, base_dir, exclude_paths=slides_12_18_seen)
+    # --- LAST SLIDE (Contact Sheet) REMOVED ---
 
 
 

@@ -309,6 +309,8 @@ def init_db():
         "inspection_agency_master_model",
         "pump_master_model",
         "ownership_master_model",
+        "master_valve_model",
+        "master_gauge_model",
     ]
 
     for mod in model_modules:
@@ -397,6 +399,8 @@ def init_db():
                         `mawp` VARCHAR(50),
                         `design_temperature` VARCHAR(50),
                         `tare_weight_kg` FLOAT,
+                        `product_id` INT,
+ `safety_valve_brand_id` INT,
                         `mgw_kg` FLOAT,
                         `mpl_kg` FLOAT,
                         `size` VARCHAR(100),
@@ -441,7 +445,6 @@ def init_db():
                         `tank_id` INT,
                         `tank_number` VARCHAR(50) NOT NULL,
                         `status_id` INT,
-                        `product_id` INT,
                         `inspection_type_id` INT,
                         `location_id` INT,
                         `working_pressure` VARCHAR(100),
@@ -449,7 +452,6 @@ def init_db():
                         `frame_type` VARCHAR(255),
                         `cabinet_type` VARCHAR(255),
                         `mfgr` VARCHAR(255),
-                        `safety_valve_brand_id` INT,
                         `safety_valve_model_id` INT,
                         `safety_valve_size_id` INT,
                         `pi_next_inspection_date` VARCHAR(7),
@@ -569,6 +571,20 @@ def init_db():
                     cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 1")
                 except Exception:
                     logger.debug(f"Could not SELECT from {table_name} (maybe table missing).")
+
+            # Migration: Add status column to master tables if missing
+            for table_name in ['master_valve', 'master_gauge']:
+                try:
+                    # Check if status column exists
+                    cursor.execute(f"SELECT COUNT(*) as cnt FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name='status'", (DB_NAME, table_name))
+                    res = cursor.fetchone()
+                    if res and res.get('cnt', 0) == 0:
+                        cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `status` INT DEFAULT 1")
+                        conn2.commit()
+                        logger.info(f"Added status column to {table_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to migrate {table_name}: {e}")
+
             # ---------- CREATE: inspection_job ----------
             try:
                 cursor.execute("""
@@ -1036,47 +1052,6 @@ def init_db():
             except Exception:
                 logger.debug(traceback.format_exc())
             # For brevity here I kept the same operations as you provided. They will run exactly as before.
-
-            # Ensure lifter_weight & safety_valve_* columns exist on tank_inspection_details (safe checks)
-            try:
-                cursor.execute(
-                    "SELECT COUNT(*) as cnt FROM information_schema.columns "
-                    "WHERE table_schema=%s AND table_name='tank_inspection_details' "
-                    "AND column_name='lifter_weight'",
-                    (DB_NAME,)
-                )
-                cnt = cursor.fetchone().get('cnt', 0)
-                if cnt == 0:
-                    try:
-                        cursor.execute("ALTER TABLE `tank_inspection_details` ADD COLUMN lifter_weight VARCHAR(255) NULL")
-                        conn2.commit()
-                    except Exception:
-                        conn2.rollback()
-            except Exception:
-                logger.debug("Could not ensure lifter_weight column (table may not exist).")
-                conn2.rollback()
-
-            for col_def in [
-                ("safety_valve_brand_id", "INT NULL"),
-                ("safety_valve_model_id", "INT NULL"),
-                ("safety_valve_size_id", "INT NULL"),
-            ]:
-                colname, coltype = col_def
-                try:
-                    cursor.execute(
-                        "SELECT COUNT(*) AS cnt FROM information_schema.columns WHERE table_schema=%s AND table_name='tank_inspection_details' AND column_name=%s",
-                        (DB_NAME, colname)
-                    )
-                    cnt = cursor.fetchone().get('cnt', 0)
-                    if cnt == 0:
-                        try:
-                            cursor.execute(f"ALTER TABLE `tank_inspection_details` ADD COLUMN `{colname}` {coltype}")
-                            conn2.commit()
-                        except Exception:
-                            conn2.rollback()
-                except Exception:
-                    conn2.rollback()
-
             # ---------- SEED: OPERATORS ----------
             try:
                 seed_operators(cursor)

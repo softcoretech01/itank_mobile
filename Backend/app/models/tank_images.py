@@ -13,6 +13,8 @@ class TankImage(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     created_date = Column(Date, nullable=False)
+    is_marked = Column(Integer, default=0, server_default="0")
+    is_assigned = Column(Integer, default=0, server_default="0")
 
     # Indexes for common queries
     __table_args__ = (

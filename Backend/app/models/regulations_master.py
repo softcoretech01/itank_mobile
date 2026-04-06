@@ -6,6 +6,7 @@ class RegulationsMaster(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     regulation_name = Column(String(100), unique=True, nullable=False)
+    status = Column(Integer, default=1)
     created_by = Column(Integer, nullable=True)
     updated_by = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

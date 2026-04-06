@@ -18,12 +18,13 @@ from decimal import Decimal
 import urllib.parse
 import importlib
 
-from app.utils.s3_utils import AWS_S3_BUCKET
+from app.utils.s3_utils import AWS_S3_BUCKET, to_cdn_url
 from app.database import get_db, get_db_connection
 from app.routers import to_do_list_router
 from app.routers.tank_checkpoints_router import FAULTY_STATUS_IDS
 from app.models.tank_certificate import TankCertificate
 from app.models.inspection_history_model import InspectionHistory
+from app.models.users_model import User
 
 try:
     from PIL import Image
@@ -67,7 +68,7 @@ def success_resp(message: str, data: Any = None, status_code: int = 200):
         content={
             "success": True,
             "message": message,
-            "data": jsonable_encoder(data or {})
+            "data": jsonable_encoder(data) if data is not None else {}
         },
     )
 
@@ -147,69 +148,21 @@ from io import BytesIO
 from app.utils.s3_utils import build_s3_key, upload_fileobj_to_s3
 
 
-def _save_lifter_file(file: UploadFile, tank_number: str, inspection_id: int):
-    safe_tank = tank_number or f"inspection_{inspection_id}"
-    safe_tank = safe_tank.lower().replace(" ", "_")
-
-    ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
-    ts = int(time.time())
-
-    logical_name = f"{safe_tank}_lifter_weight_{ts}{ext}"
-
-    # ---- read file once ----
-    buffer = BytesIO()
-    while True:
-        chunk = file.file.read(64 * 1024)
-        if not chunk:
-            break
-        buffer.write(chunk)
-    buffer.seek(0)
-
-    original_key = build_s3_key(logical_name)
-
-    # ✅ USE SAME WORKING HELPER
-    upload_fileobj_to_s3(buffer, original_key, file.content_type)
-
-    thumb_key = original_key
-
-    if Image:
-        try:
-            buffer.seek(0)
-            img = Image.open(buffer)
-            img.thumbnail((400, 400))
-            thumb_buffer = BytesIO()
-            img.convert("RGB").save(thumb_buffer, format="JPEG")
-            thumb_buffer.seek(0)
-
-            thumb_name = f"{safe_tank}_lifter_weight_{ts}_thumb.jpg"
-            thumb_key = build_s3_key(thumb_name)
-
-            upload_fileobj_to_s3(thumb_buffer, thumb_key, "image/jpeg")
-        except Exception as e:
-            logger.warning("Thumbnail generation failed", exc_info=True)
-
-    return {
-        "image_path": original_key,
-        "thumbnail_path": thumb_key
-    }
-
-
-
-def fetch_pi_next_inspection_date(db: Session, tank_id: int):
+def fetch_pi_next_inspection_date(db: Session, tank_number: str):
     try:
         row = db.execute(
             text(
                 """
                 SELECT next_insp_date
                 FROM tank_certificate
-                WHERE tank_id = :tank_id
+                WHERE tank_number = :tank_number
                 ORDER BY next_insp_date IS NULL ASC, next_insp_date DESC
                 LIMIT 1
                 """
             ),
-            {"tank_id": tank_id},
+            {"tank_number": tank_number},
         ).fetchone()
-        print(f"Debug: tank_id={tank_id}, row={row}")
+        print(f"Debug: tank_number={tank_number}, row={row}")
         if not row:
             print("Debug: no row")
             return None
@@ -234,7 +187,7 @@ def fetch_pi_next_inspection_date(db: Session, tank_id: int):
                 return None
     except Exception as exc:
         print(f"Debug: exception in fetch: {exc}")
-        logger.warning("Could not fetch PI next inspection date for tank_id %s: %s", tank_id, exc)
+        logger.warning("Could not fetch PI next inspection date for tank_number %s: %s", tank_number, exc)
         return None
 
 
@@ -299,9 +252,12 @@ def fetch_tank_details(db: Session, tank_number: str):
     result = db.execute(
         text(
             """
-            SELECT working_pressure, frame_type, design_temperature, cabinet_type, mfgr, ownership
-            FROM tank_details
-            WHERE tank_number = :tank_number
+            SELECT t.working_pressure, t.frame_type, t.design_temperature, t.cabinet_type, t.mfgr, t.ownership,
+                   t.product_id, pm.product_name, t.safety_valve_brand_id, sv.brand_name AS safety_valve_brand_name
+            FROM tank_details t
+            LEFT JOIN product_master pm ON t.product_id = pm.id
+            LEFT JOIN safety_valve_brand sv ON t.safety_valve_brand_id = sv.id
+            WHERE t.tank_number = :tank_number
             LIMIT 1
             """
         ),
@@ -317,19 +273,31 @@ def fetch_tank_details(db: Session, tank_number: str):
     try:
         if hasattr(result, "_mapping"):
             mapping = result._mapping
-            working_pressure = mapping.get("working_pressure", None)
-            frame_type = mapping.get("frame_type", None)
-            design_temperature = mapping.get("design_temperature", None)
-            cabinet_type = mapping.get("cabinet_type", None)
-            mfgr = mapping.get("mfgr", None)
-            ownership = mapping.get("ownership", None)
+            return {
+                "working_pressure": mapping.get("working_pressure"),
+                "frame_type": mapping.get("frame_type"),
+                "design_temperature": mapping.get("design_temperature"),
+                "cabinet_type": mapping.get("cabinet_type"),
+                "mfgr": mapping.get("mfgr"),
+                "ownership": mapping.get("ownership"),
+                "product_id": mapping.get("product_id"),
+                "product_name": mapping.get("product_name"),
+                "safety_valve_brand_id": mapping.get("safety_valve_brand_id"),
+                "safety_valve_brand_name": mapping.get("safety_valve_brand_name"),
+            }
         else:
-            working_pressure = result[0]
-            frame_type = result[1]
-            design_temperature = result[2]
-            cabinet_type = result[3]
-            mfgr = result[4]
-            ownership = result[5]
+            return {
+                "working_pressure": result[0],
+                "frame_type": result[1],
+                "design_temperature": result[2],
+                "cabinet_type": result[3],
+                "mfgr": result[4],
+                "ownership": result[5],
+                "product_id": result[6],
+                "product_name": result[7],
+                "safety_valve_brand_id": result[8],
+                "safety_valve_brand_name": result[9],
+            }
     except Exception:
         try:
             rowm = dict(result)
@@ -363,26 +331,27 @@ def fetch_tank_details(db: Session, tank_number: str):
 class TankInspectionCreate(BaseModel):
     tank_id: int = Field(..., description="tank_details.tank_id (client must send tank_id)")
     status_id: Optional[int] = None
-    product_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
     location_id: Optional[int] = None
-    safety_valve_brand_id: Optional[int] = None
     safety_valve_model_id: Optional[int] = None  # nullable
     safety_valve_size_id: Optional[int] = None   # nullable
     notes: Optional[str] = None
     operator_id: Optional[int] = None   # manual operator id entered by user (nullable)
     vacuum_reading: Optional[str] = None
+    vacuum_uom: Optional[str] = None
     lifter_weight_value: Optional[str] = None
+    pi_next_inspection_date: Optional[str] = None
 
     class Config:
         json_schema_extra = {
             "example": {
                 "tank_id": 0,
                 "status_id": 0,
-                "product_id": 0,
                 "inspection_type_id": 0,
+                "vaccum_reading": 0,
+                "vacuum_uom": 0,
+                "lifter_weight_value": 0,
                 "location_id": 0,
-                "safety_valve_brand_id": 0,
                 "safety_valve_model_id": 0,
                 "safety_valve_size_id": 0,
                 "notes": "All checks ok",
@@ -396,7 +365,6 @@ class TankInspectionResponse(BaseModel):
     report_number: str
     inspection_date: datetime
     status_id: Optional[int] = None
-    product_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
     location_id: Optional[int] = None
     working_pressure: Optional[float] = None
@@ -405,7 +373,6 @@ class TankInspectionResponse(BaseModel):
     cabinet_type: Optional[str] = None
     mfgr: Optional[str] = None
     pi_next_inspection_date: Optional[str] = None
-    safety_valve_brand_id: Optional[int] = None
     safety_valve_model_id: Optional[int] = None
     safety_valve_size_id: Optional[int] = None
     notes: Optional[str] = None
@@ -413,8 +380,8 @@ class TankInspectionResponse(BaseModel):
     operator_id: Optional[int] = None
     emp_id: int     # NOT optional - must be the logged-in user's ID
     ownership: Optional[str] = None
-    lifter_weight: Optional[str] = None
     vacuum_reading: Optional[str] = None
+    vacuum_uom: Optional[str] = None
     lifter_weight_value: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -430,11 +397,10 @@ class TankInspectionUpdate(BaseModel):
     tank_id: Optional[int] = None
     status_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
-    product_id: Optional[int] = None
     location_id: Optional[int] = None
-    safety_valve_brand_id: Optional[int] = None
     safety_valve_model_id: Optional[int] = None      # nullable
     safety_valve_size_id: Optional[int] = None       # nullable
+    pi_next_inspection_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -465,11 +431,13 @@ def get_all_inspections(
                 l.location_name,
                 sv.brand_name AS safety_valve_brand_name
             FROM tank_inspection_details ti
+            JOIN tank_details td ON ti.tank_id = td.tank_id
             LEFT JOIN tank_status ps ON ti.status_id = ps.id
-            LEFT JOIN product_master pm ON ti.product_id = pm.id
+            LEFT JOIN product_master pm ON td.product_id = pm.id
             LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
             LEFT JOIN location_master l ON ti.location_id = l.id
-            LEFT JOIN safety_valve_brand sv ON ti.safety_valve_brand_id = sv.id
+            LEFT JOIN safety_valve_brand sv ON td.safety_valve_brand_id = sv.id
+            WHERE (ti.is_reviewed = 0 OR ti.is_reviewed IS NULL)
             ORDER BY ti.inspection_date DESC, ti.inspection_id DESC
         """)
         
@@ -478,8 +446,19 @@ def get_all_inspections(
         # Convert Decimals and datetimes for JSON, and remove IDs
         def clean_row(r):
             d = dict(r)
+            
+            # ---------------------------------------------------------
+            # Format report_number dynamically to insert inspection_type
+            # ---------------------------------------------------------
+            report_num = d.get("report_number")
+            itype_name = d.get("inspection_type_name")
+            if report_num and itype_name and report_num.startswith("SG-T1-"):
+                normalized_name = itype_name.upper().replace("-", "").replace(" ", "")
+                if normalized_name in ["ONHIRE", "OFFHIRE", "CONDITION"]:
+                    d["report_number"] = report_num.replace("SG-T1-", f"SG-{normalized_name}-T1-", 1)
+                    
             # Remove IDs as requested to return names "instead of" ids
-            for id_key in ["status_id", "product_id", "inspection_type_id", "location_id", "safety_valve_brand_id"]:
+            for id_key in ["status_id", "inspection_type_id", "location_id"]:
                 d.pop(id_key, None)
                 
             for k, v in d.items():
@@ -528,6 +507,7 @@ def export_inspections_to_excel(
                 ti.pi_next_inspection_date,
                 ti.notes,
                 ti.vacuum_reading,
+                ti.vacuum_uom,
                 ti.lifter_weight_value,
                 ti.ownership,
                 ti.operator_id,
@@ -545,11 +525,12 @@ def export_inspections_to_excel(
                 sm.model_name AS safety_valve_model_name,
                 ss.size_label AS safety_valve_size_name
             FROM tank_inspection_details ti
+            JOIN tank_details td ON ti.tank_id = td.tank_id
             LEFT JOIN tank_status ps ON ti.status_id = ps.id
             LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
             LEFT JOIN location_master pl ON ti.location_id = pl.id
-            LEFT JOIN product_master pm ON ti.product_id = pm.id
-            LEFT JOIN safety_valve_brand sb ON ti.safety_valve_brand_id = sb.id
+            LEFT JOIN product_master pm ON td.product_id = pm.id
+            LEFT JOIN safety_valve_brand sb ON td.safety_valve_brand_id = sb.id
             LEFT JOIN safety_valve_model sm ON ti.safety_valve_model_id = sm.id
             LEFT JOIN safety_valve_size ss ON ti.safety_valve_size_id = ss.id
             ORDER BY ti.inspection_date DESC
@@ -564,10 +545,9 @@ def export_inspections_to_excel(
         headers = [
             "ID", "Report No", "Tank No", "Date", "Status", "Inspection Type", "Location", "Product", 
             "Manufacturer", "Working Pressure", "Design Temp", "Frame Type", "Cabinet Type", "Next Inspection", 
-            "SV Brand", "SV Model", "SV Size", "Vacuum Reading", "Lifter Weight", "Ownership", "Operator ID", 
+            "SV Brand", "SV Model", "SV Size", "Vacuum Reading", "Vacuum UOM", "Lifter Weight", "Ownership", "Operator ID", 
             "Is Submitted", "Web Submitted", "Created By", "Created At", "Updated By", "Updated At"
         ]
-        
         header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
         header_alignment = Alignment(horizontal="center", vertical="center")
@@ -580,7 +560,18 @@ def export_inspections_to_excel(
             
         for row_num, row_data in enumerate(results, 2):
             ws.cell(row=row_num, column=1, value=row_data.get("inspection_id"))
-            ws.cell(row=row_num, column=2, value=row_data.get("report_number"))
+            
+            # ---------------------------------------------------------
+            # Format report_number dynamically to insert inspection_type
+            # ---------------------------------------------------------
+            report_num = row_data.get("report_number")
+            itype_name = row_data.get("inspection_type_name")
+            if report_num and itype_name and report_num.startswith("SG-T1-"):
+                normalized_name = itype_name.upper().replace("-", "").replace(" ", "")
+                if normalized_name in ["ONHIRE", "OFFHIRE", "CONDITION"]:
+                    report_num = report_num.replace("SG-T1-", f"SG-{normalized_name}-T1-", 1)
+                    
+            ws.cell(row=row_num, column=2, value=report_num)
             ws.cell(row=row_num, column=3, value=row_data.get("tank_number"))
             ws.cell(row=row_num, column=4, value=str(row_data.get("inspection_date")))
             ws.cell(row=row_num, column=5, value=row_data.get("status_name"))
@@ -597,24 +588,25 @@ def export_inspections_to_excel(
             ws.cell(row=row_num, column=16, value=row_data.get("safety_valve_model_name") or "-")
             ws.cell(row=row_num, column=17, value=row_data.get("safety_valve_size_name") or "-")
             ws.cell(row=row_num, column=18, value=row_data.get("vacuum_reading") or "-")
-            ws.cell(row=row_num, column=19, value=row_data.get("lifter_weight_value") or "-")
-            ws.cell(row=row_num, column=20, value=row_data.get("ownership") or "-")
-            ws.cell(row=row_num, column=21, value=row_data.get("operator_id") or "-")
+            ws.cell(row=row_num, column=19, value=row_data.get("vacuum_uom") or "-")
+            ws.cell(row=row_num, column=20, value=row_data.get("lifter_weight_value") or "-")
+            ws.cell(row=row_num, column=21, value=row_data.get("ownership") or "-")
+            ws.cell(row=row_num, column=22, value=row_data.get("operator_id") or "-")
             
             # Is Submitted status
             is_sub = "SUBMITTED" if row_data.get("is_submitted") == 1 else "DRAFT"
-            ws.cell(row=row_num, column=22, value=is_sub)
+            ws.cell(row=row_num, column=23, value=is_sub)
             
             # Web Submitted status with UPDATED logic
             web_status = ""
             if row_data.get("web_submitted") == 1:
                 web_status = "UPDATED" if row_data.get("is_submitted") == 1 else "SUBMITTED"
-            ws.cell(row=row_num, column=23, value=web_status)
+            ws.cell(row=row_num, column=24, value=web_status)
             
-            ws.cell(row=row_num, column=24, value=row_data.get("created_by"))
-            ws.cell(row=row_num, column=25, value=str(row_data.get("created_at")))
-            ws.cell(row=row_num, column=26, value=row_data.get("updated_by"))
-            ws.cell(row=row_num, column=27, value=str(row_data.get("updated_at")))
+            ws.cell(row=row_num, column=25, value=row_data.get("created_by"))
+            ws.cell(row=row_num, column=26, value=str(row_data.get("created_at")))
+            ws.cell(row=row_num, column=27, value=row_data.get("updated_by"))
+            ws.cell(row=row_num, column=28, value=str(row_data.get("updated_at")))
 
         # Auto-adjust column width
         for col in ws.columns:
@@ -858,104 +850,6 @@ def get_active_tanks(db: Session = Depends(get_db), current_user: Optional[dict]
         return error_resp("Error fetching active tanks", 500)
 
 
-# -------------------------
-# Lifter weight thumbnail endpoint
-# -------------------------
-@router.get("/lifter_weight/{inspection_id}")
-def get_lifter_weight_thumbnail(
-    inspection_id: int,
-    db: Session = Depends(get_db),
-    current_user: Optional[dict] = Depends(get_current_user)
-):
-    try:
-        # Try to select thumbnail column if it exists
-        try:
-            row = db.execute(
-                text("""
-                    SELECT lifter_weight,
-                           lifter_weight_thumbnail,
-                           tank_number
-                    FROM tank_inspection_details
-                    WHERE inspection_id = :id
-                """),
-                {"id": inspection_id}
-            ).fetchone()
-        except Exception:
-            # Fallback for older schema (no thumbnail column)
-            row = db.execute(
-                text("""
-                    SELECT lifter_weight,
-                           tank_number
-                    FROM tank_inspection_details
-                    WHERE inspection_id = :id
-                """),
-                {"id": inspection_id}
-            ).fetchone()
-
-        if not row:
-            return error_resp("No inspection found.", 404)
-
-        # Normalize row
-        if hasattr(row, "_mapping"):
-            m = row._mapping
-            tank_number = m.get("tank_number")
-            rel_path = m.get("lifter_weight")
-            thumb_db = m.get("lifter_weight_thumbnail") if "lifter_weight_thumbnail" in m else None
-        else:
-            # Index-based fallback
-            rel_path = row[0]
-            if len(row) == 3:
-                thumb_db = row[1]
-                tank_number = row[2]
-            else:
-                thumb_db = None
-                tank_number = row[1]
-
-        if not rel_path:
-            return error_resp("No lifter weight photo found for this inspection.", 404)
-
-        # If DB has a thumbnail path, return it directly
-        if thumb_db:
-            return success_resp(
-                "Lifter weight thumbnail fetched",
-                {
-                    "inspection_id": inspection_id,
-                    "thumbnail_path": thumb_db
-                },
-                200,
-            )
-
-        # ---------- NEW: derive thumbnail from lifter_weight ----------
-        # rel_path example: "uploads/iso_tank/2025/12/1733647560_TANK123_lifter_weight.jpg"
-        folder = os.path.dirname(rel_path) or ""
-        base_name = os.path.basename(rel_path)
-        name_no_ext, _ext = os.path.splitext(base_name)
-
-        # Our _save_lifter_file saves thumbnail as "{timestamp}_{tank}_lifter_weight_thumb.jpg"
-        thumb_name = f"{name_no_ext}_thumb.jpg"
-
-        if folder:
-            thumb_rel = f"{folder}/{thumb_name}"
-        else:
-            thumb_rel = thumb_name
-
-        # Check if thumbnail file exists, else fallback to original image
-        thumb_abs = os.path.join(os.getcwd(), thumb_rel)
-        if not os.path.exists(thumb_abs):
-            thumb_rel = rel_path
-
-        return success_resp(
-            "Lifter weight thumbnail fetched",
-            {
-                "inspection_id": inspection_id,
-                "thumbnail_path": thumb_rel,
-            },
-            200,
-        )
-
-    except Exception as e:
-        logger.error(f"Error fetching lifter weight thumbnail for {inspection_id}: {e}", exc_info=True)
-        return error_resp("Internal server error", 500)
 
 # -------------------------
 # Create Tank Inspection (flat payload with master ids)
@@ -1003,11 +897,9 @@ def create_tank_inspection(
         # Validation happens at SUBMIT time via validation/submit endpoints
         master_checks = [
             ("tank_status", payload.status_id, "status_id"),
-            ("product_master", payload.product_id, "product_id"),
             ("inspection_type", payload.inspection_type_id, "inspection_type_id"),
-            ("location_master", payload.location_id, "location_id"),
+            ("location_id", payload.location_id, "location_id"),
             # Safety valves (Optional)
-            ("safety_valve_brand", payload.safety_valve_brand_id, "safety_valve_brand_id"),
             ("safety_valve_model", payload.safety_valve_model_id, "safety_valve_model_id"),
             ("safety_valve_size", payload.safety_valve_size_id, "safety_valve_size_id"),
         ]
@@ -1064,10 +956,9 @@ def create_tank_inspection(
 
         # Generate Reports
         report_number = generate_report_number(db, inspection_date, inspection_type_id=payload.inspection_type_id)
-        pi_next_date = fetch_pi_next_inspection_date(db, payload.tank_id)
+        pi_next_date = payload.pi_next_inspection_date if payload.pi_next_inspection_date else fetch_pi_next_inspection_date(db, tank_number)
         ownership_val = tank_details.get("ownership")
         # Sanitize Safety Valve IDs for Insert (Ensure None if invalid)
-        svb = payload.safety_valve_brand_id if is_valid_id(payload.safety_valve_brand_id) else None
         svm = payload.safety_valve_model_id if is_valid_id(payload.safety_valve_model_id) else None
         svs = payload.safety_valve_size_id if is_valid_id(payload.safety_valve_size_id) else None
 
@@ -1076,17 +967,17 @@ def create_tank_inspection(
             db.execute(
                 text("""
                     INSERT INTO tank_inspection_details
-                    (inspection_date, report_number, tank_number, tank_id, status_id, product_id, inspection_type_id, location_id,
+                    (inspection_date, report_number, tank_number, tank_id, status_id, inspection_type_id, location_id,
                      working_pressure, frame_type, design_temperature, cabinet_type, mfgr, pi_next_inspection_date,
-                     safety_valve_brand_id, safety_valve_model_id, safety_valve_size_id, notes,
-                     vacuum_reading, lifter_weight_value,
+                     safety_valve_model_id, safety_valve_size_id, notes,
+                     vacuum_reading, vacuum_uom, lifter_weight_value,
                      created_by, updated_by,
                      operator_id, emp_id, ownership, is_submitted, created_at, updated_at)
                     VALUES
-                    (:inspection_date, :report_number, :tank_number, :tank_id, :status_id, :product_id, :inspection_type_id, :location_id,
+                    (:inspection_date, :report_number, :tank_number, :tank_id, :status_id, :inspection_type_id, :location_id,
                      :working_pressure, :frame_type, :design_temperature, :cabinet_type, :mfgr, :pi_next_inspection_date,
-                     :svb, :svm, :svs, :notes,
-                     :vacuum_reading, :lifter_weight_value,
+                     :svm, :svs, :notes,
+                     :vacuum_reading, :vacuum_uom, :lifter_weight_value,
                      :created_by, :updated_by,
                      :operator_id, :emp_id, :ownership, :is_submitted, NOW(), NOW())
                 """),
@@ -1096,7 +987,6 @@ def create_tank_inspection(
                     "tank_number": tank_number,
                     "tank_id": payload.tank_id,
                     "status_id": None if payload.status_id in [None, 0, "0", ""] else payload.status_id,
-                    "product_id": None if payload.product_id in [None, 0, "0", ""] else payload.product_id,
                     "inspection_type_id": payload.inspection_type_id if is_valid_id(payload.inspection_type_id) else None,
                     "location_id": payload.location_id if is_valid_id(payload.location_id) else None,
                     "working_pressure": tank_details.get("working_pressure"),
@@ -1105,9 +995,10 @@ def create_tank_inspection(
                     "cabinet_type": tank_details.get("cabinet_type"),
                     "mfgr": tank_details.get("mfgr"),
                     "pi_next_inspection_date": pi_next_date,
-                    "svb": svb, "svm": svm, "svs": svs,
+                    "svm": svm, "svs": svs,
                     "notes": payload.notes,
                     "vacuum_reading": payload.vacuum_reading,
+                    "vacuum_uom": payload.vacuum_uom,
                     "lifter_weight_value": payload.lifter_weight_value,
                     # created_by / updated_by MUST come from logged-in user
                     "created_by": emp_id_val,
@@ -1150,13 +1041,13 @@ class TankInspectionUpdateModel(BaseModel):
     tank_id: Optional[int] = None
     status_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
-    product_id: Optional[int] = None
     location_id: Optional[int] = None
-    safety_valve_brand_id: Optional[int] = None
     safety_valve_model_id: Optional[int] = None      # nullable
     safety_valve_size_id: Optional[int] = None       # nullable
     vacuum_reading: Optional[str] = None
+    vacuum_uom: Optional[str] = None
     lifter_weight_value: Optional[str] = None
+    pi_next_inspection_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1231,10 +1122,10 @@ def update_tank_inspection_details(
 
         # --- Handle Standard Fields ---
         fields_to_update = [
-            "inspection_date", "status_id", "inspection_type_id", "product_id", "location_id",
+            "inspection_date", "status_id", "inspection_type_id", "location_id",
             "working_pressure", "frame_type", "design_temperature", "cabinet_type", "mfgr",
-            "notes", "ownership", "safety_valve_brand_id", "safety_valve_model_id", "safety_valve_size_id",
-            "vacuum_reading", "lifter_weight_value"
+            "notes", "ownership", "safety_valve_model_id", "safety_valve_size_id",
+            "vacuum_reading", "vacuum_uom", "lifter_weight_value", "pi_next_inspection_date"
         ]
 
         for field in fields_to_update:
@@ -1247,7 +1138,7 @@ def update_tank_inspection_details(
                         val = None
                 
                 # Special Logic for other IDs: Treat 0 as None if desired (based on user request)
-                if field in ["status_id", "product_id", "inspection_type_id", "location_id", "safety_valve_brand_id"]:
+                if field in ["status_id", "inspection_type_id", "location_id"]:
                      if val == 0:
                          val = None
 
@@ -1336,10 +1227,10 @@ def get_inspection_review(
                     t.mfgr,
                     t.ownership,
                     t.cabinet_type,
-                    ti.product_id,
+                    t.product_id,
                     ti.inspection_type_id,
                     ti.location_id,
-                    ti.safety_valve_brand_id,
+                    t.safety_valve_brand_id,
                     ti.safety_valve_model_id,
                     ti.safety_valve_size_id,
                     ti.working_pressure,
@@ -1351,17 +1242,19 @@ def get_inspection_review(
                     ps.status_name,
                     sb.brand_name AS safety_valve_brand,
                     ti.vacuum_reading,
+                    ti.vacuum_uom,
                     ti.lifter_weight_value,
-                    ti.lifter_weight,
                     ti.is_reviewed,
-                    ti.reviewed_by
+                    ti.reviewed_by,
+                    ti.is_submitted,
+                    ti.web_submitted
                 FROM tank_inspection_details ti
                 LEFT JOIN tank_details t ON ti.tank_id = t.tank_id
                 LEFT JOIN location_master pl ON ti.location_id = pl.id
                 LEFT JOIN inspection_type pit ON ti.inspection_type_id = pit.id
-                LEFT JOIN product_master pm ON ti.product_id = pm.id
+                LEFT JOIN product_master pm ON t.product_id = pm.id
                 LEFT JOIN tank_status ps ON ti.status_id = ps.id
-                LEFT JOIN safety_valve_brand sb ON ti.safety_valve_brand_id = sb.id
+                LEFT JOIN safety_valve_brand sb ON t.safety_valve_brand_id = sb.id
                 WHERE ti.inspection_id = :iid
             """),
             {"iid": inspection_id}
@@ -1371,6 +1264,17 @@ def get_inspection_review(
             return error_resp("Inspection not found", 404)
 
         inspection = dict(inspection_row._mapping)
+
+        # ---------------------------------------------------------
+        # Format report_number dynamically to insert inspection_type
+        # ---------------------------------------------------------
+        report_num = inspection.get("report_number")
+        itype_name = inspection.get("inspection_type_name")
+        if report_num and itype_name and report_num.startswith("SG-T1-"):
+            normalized_name = itype_name.upper().replace("-", "").replace(" ", "")
+            if normalized_name in ["ONHIRE", "OFFHIRE", "CONDITION"]:
+                inspection["report_number"] = report_num.replace("SG-T1-", f"SG-{normalized_name}-T1-", 1)
+
 
         # ---------------------------------------------------------
         # 1.a FETCH next_inspection_date FROM tank_certificate
@@ -1396,22 +1300,11 @@ def get_inspection_review(
             inspection["next_inspection_date"] = None
 
         # ---------------------------------------------------------
-        # LIFTER WEIGHT CDN URL
-        # ---------------------------------------------------------
-        from app.utils.s3_utils import to_cdn_url
-
-        inspection["lifter_weight_url"] = (
-            to_cdn_url(inspection["lifter_weight"])
-            if inspection.get("lifter_weight")
-            else None
-        )
-
-        # ---------------------------------------------------------
         # 2. FETCH IMAGES
         # ---------------------------------------------------------
         raw_images = db.execute(
             text("""
-                SELECT image_type, image_path, thumbnail_path
+                SELECT image_id, image_type, image_path, thumbnail_path, is_marked, is_assigned
                 FROM tank_images
                 WHERE inspection_id = :iid
             """),
@@ -1419,10 +1312,9 @@ def get_inspection_review(
         ).fetchall()
 
         images = []
+        image_map = {} # Map image_id (type ID) to URL
         for r in raw_images:
             img = dict(r._mapping)
-            if str(img.get("image_type", "")).lower() == "lifter_weight":
-                continue
 
             if img.get("image_path"):
                 img["image_url"] = to_cdn_url(img["image_path"])
@@ -1430,8 +1322,13 @@ def get_inspection_review(
                 img["thumbnail_url"] = to_cdn_url(img["thumbnail_path"])
 
             images.append(img)
-
-        inspection["lifter_weight_thumbnail"] = None
+            
+            # Map type ID to image URL for assignment lookups
+            if img.get("image_id") is not None:
+                tid = str(img["image_id"])
+                if tid not in image_map:
+                    image_map[tid] = []
+                image_map[tid].append(img.get("image_url"))
 
         # ---------------------------------------------------------
         # 3. FETCH CHECKLIST
@@ -1447,6 +1344,7 @@ def get_inspection_review(
                     ic.sn,
                     ic.status_id,
                     ic.comment,
+                    ic.image_id_assigned,
                     s.status_name
                 FROM inspection_checklist ic
                 LEFT JOIN inspection_status s ON ic.status_id = s.status_id
@@ -1482,8 +1380,29 @@ def get_inspection_review(
                 "sub_job_id": r["sub_job_id"],
                 "status_id": r["status_id"],
                 "status_name": r["status_name"],
-                "comment": r["comment"]
+                "comment": r["comment"],
+                "image_id_assigned": r["image_id_assigned"],
+                "assigned_images": []
             })
+            
+            # Link image URLs if assigned
+            if r.get("image_id_assigned"):
+                assigned_ids = [v.strip() for v in str(r["image_id_assigned"]).split(",") if v.strip()]
+                for aid in assigned_ids:
+                    if aid in image_map:
+                        # Find the first image of this type to get the name
+                        img_name = ""
+                        # Find in raw_images to get image_type
+                        for raw_img in raw_images:
+                            if str(raw_img._mapping.get("image_id")) == aid:
+                                img_name = raw_img._mapping.get("image_type")
+                                break
+                        
+                        for url in image_map[aid]:
+                            job_groups[job_id]["items"][-1]["assigned_images"].append({
+                                "url": url,
+                                "name": img_name
+                            })
 
         inspection_checklist = list(job_groups.values())
 
@@ -1548,153 +1467,6 @@ def delete_inspection_review(inspection_id: int, db: Session = Depends(get_db), 
         return error_resp("Internal server error", 500)
 
 
-# -------------------------
-# Upload lifter weight (create/replace) endpoint
-# -------------------------
-@router.post("/{inspection_id}/lifter_weight", status_code=200)
-def upload_lifter_weight(inspection_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: Optional[dict] = Depends(get_current_user)):
-    try:
-        # Try to fetch thumbnail column as well
-        try:
-            row = db.execute(text("SELECT inspection_id, tank_number, lifter_weight, lifter_weight_thumbnail, is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
-        except Exception:
-            row = db.execute(text("SELECT inspection_id, tank_number, lifter_weight, is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
-
-        if not row:
-            return error_resp(f"Inspection {inspection_id} not found", 404)
-            
-        # Submission check for role_id 2
-        row_dict_check = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-        is_submitted = int(row_dict_check.get("is_submitted", 0))
-        web_submitted = int(row_dict_check.get("web_submitted", 0))
-        role_id = current_user.role_id
-        
-        if (is_submitted == 1 or web_submitted == 1) and role_id == 2:
-            return error_resp("Cannot modify images for submitted inspection", 403)
-        
-        # Normalize row access
-        thumb_rel = None
-        if hasattr(row, "_mapping"):
-            tank_number = row._mapping.get("tank_number")
-            old_rel = row._mapping.get("lifter_weight")
-            thumb_rel = row._mapping.get("lifter_weight_thumbnail") if "lifter_weight_thumbnail" in row._mapping else None
-        else:
-            try:
-                old_rel = row[2]
-                tank_number = row[1]
-                if len(row) > 3:
-                    thumb_rel = row[3]
-            except Exception:
-                old_rel = None
-                tank_number = None
-
-        if not file.content_type or not file.content_type.startswith("image/"):
-            return error_resp("File must be an image", 400)
-
-        saved = _save_lifter_file(file, tank_number, inspection_id)
-        rel_path = saved["image_path"]
-        thumb_path = saved.get("thumbnail_path")
-
-        # Cleanup old files
-        try:
-            if old_rel:
-                old_abs = os.path.join(IMAGES_ROOT_DIR, *old_rel.split("/"))
-                if os.path.exists(old_abs):
-                    try:
-                        os.remove(old_abs)
-                    except Exception:
-                        logger.debug("Could not remove old lifter file: %s", old_abs, exc_info=True)
-                
-                # Cleanup old thumbnail (Explicit Path)
-                if thumb_rel:
-                    try:
-                        thumb_abs = os.path.join(IMAGES_ROOT_DIR, *thumb_rel.split("/"))
-                        if os.path.exists(thumb_abs):
-                            os.remove(thumb_abs)
-                    except Exception:
-                        pass
-                
-                # Cleanup inferred thumbnail (if explicit path was missing but file exists in new structure)
-                # old_rel might be "TANK/original/file.jpg" -> we check "TANK/thumbnail/file_thumb.jpg"
-                try:
-                    old_dir_name = os.path.dirname(old_abs) # .../original
-                    old_file_name = os.path.basename(old_abs) # file.jpg
-                    
-                    # Check if we are in an 'original' folder
-                    if os.path.basename(old_dir_name) == "originals":
-                        base_dir = os.path.dirname(old_dir_name) # .../TANK
-                        thumb_dir = os.path.join(base_dir, "thumbnails")
-                        
-                        # Construct expected thumbnail name
-                        # Original: {tank}_{uuid}.jpg -> Thumb: {tank}_{uuid}_thumb.jpg
-                        name_part, ext_part = os.path.splitext(old_file_name)
-                        expected_thumb_name = f"{name_part}_thumb.jpg"
-                        
-                        expected_thumb_path = os.path.join(thumb_dir, expected_thumb_name)
-                        if os.path.exists(expected_thumb_path):
-                            try:
-                                os.remove(expected_thumb_path)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-                # Legacy Cleanup (Same folder - for very old files)
-                try:
-                    old_base = os.path.splitext(os.path.basename(old_abs))[0]
-                    folder = os.path.dirname(old_abs)
-                    if os.path.isdir(folder):
-                        for fn in os.listdir(folder):
-                            if old_base in fn and "thumb" in fn:
-                                try:
-                                    os.remove(os.path.join(folder, fn))
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
-        except Exception:
-            logger.debug("Error while cleaning old lifter files for inspection %s", inspection_id, exc_info=True)
-
-        # --- DB UPDATE (FIXED WITH THUMBNAIL) ---
-        try:
-            db.execute(text("""
-                UPDATE tank_inspection_details 
-                SET lifter_weight = :lp, 
-                    lifter_weight_thumbnail = :thumb, 
-                    updated_at = NOW() 
-                WHERE inspection_id = :id
-            """), {
-                "lp": rel_path, 
-                "thumb": thumb_path,
-                "id": inspection_id
-            })
-            db.commit()
-        except Exception as e_main:
-            db.rollback()
-            logger.warning(f"Failed to update with thumbnail column, trying without: {e_main}")
-            # Fallback: maybe lifter_weight_thumbnail column doesn't exist?
-            try:
-                db.execute(text("""
-                    UPDATE tank_inspection_details 
-                    SET lifter_weight = :lp, 
-                        updated_at = NOW() 
-                    WHERE inspection_id = :id
-                """), {
-                    "lp": rel_path, 
-                    "id": inspection_id
-                })
-                db.commit()
-            except Exception as e_fallback:
-                db.rollback()
-                logger.error("Failed to update lifter_weight column (fallback also failed)", exc_info=True)
-                return error_resp(f"Failed to save lifter weight path to DB: {e_fallback}", 500)
-
-        return success_resp("Lifter weight photo uploaded", {"inspection_id": inspection_id, "lifter_weight": rel_path, "thumbnail": thumb_path}, 200)
-
-    except Exception as e:
-        logger.error(f"Error uploading lifter weight for inspection {inspection_id}: {e}", exc_info=True)
-        return error_resp(str(e), 500)
-
 
 @router.delete("/delete/inspection_details/{inspection_id}")
 def delete_inspection_details(inspection_id: int, db: Session = Depends(get_db), current_user: Optional[dict] = Depends(get_current_user)):
@@ -1756,14 +1528,18 @@ def get_tank_details(
         td_row = db.execute(
             text("""
                 SELECT
-                    working_pressure,
-                    design_temperature,
-                    frame_type,
-                    cabinet_type,
-                    mfgr,
-                    ownership
-                FROM tank_details
-                WHERE tank_number = :tn
+                    t.working_pressure,
+                    t.design_temperature,
+                    t.frame_type,
+                    t.cabinet_type,
+                    t.mfgr,
+                    t.ownership,
+                    pm.product_name,
+                    sb.brand_name AS safety_valve_brand_name
+                FROM tank_details t
+                LEFT JOIN product_master pm ON t.product_id = pm.id
+                LEFT JOIN safety_valve_brand sb ON t.safety_valve_brand_id = sb.id
+                WHERE t.tank_number = :tn
                 LIMIT 1
             """),
             {"tn": tank_number}
@@ -1782,6 +1558,8 @@ def get_tank_details(
                 "cabinet_type": td_row[3],
                 "mfgr": td_row[4],
                 "ownership": td_row[5],
+                "product_name": td_row[6],
+                "safety_valve_brand_name": td_row[7],
             }
         )
 
@@ -1822,6 +1600,8 @@ def get_tank_details(
             "cabinet_type": row.get("cabinet_type"),
             "mfgr": row.get("mfgr"),
             "ownership": row.get("ownership"),
+            "product_name": row.get("product_name"),
+            "safety_valve_brand_name": row.get("safety_valve_brand_name"),
             "pi_next_inspection_date": pi_next_inspection_date,
         }
 
@@ -1910,21 +1690,8 @@ def get_inspection_by_id(
             row_dict = dict(row)
 
         # ---------------------------------------------------------
-        # 4️⃣ Ownership check (emp_id)
+        # 4️⃣ Ownership check (emp_id) - REMOVED PER USER REQUEST
         # ---------------------------------------------------------
-        try:
-            row_emp_id = int(row_dict.get("emp_id"))
-            req_emp_id = int(emp_id_val)
-        except Exception:
-            return error_resp("Invalid emp_id mapping", 403)
-
-        if row_emp_id != req_emp_id:
-            logger.warning(
-                f"Inspection {inspection_id} access denied: "
-                f"belongs to emp_id={row_emp_id}, requested by emp_id={req_emp_id}"
-            )
-            return error_resp("Inspection not found or access denied", 404)
-
         # ---------------------------------------------------------
         # 5️⃣ Submission logic with role-based access
         # ---------------------------------------------------------
@@ -1954,6 +1721,7 @@ def get_inspection_by_id(
                         "report_number": None,
                         "lifter_weight": None,
                         "vacuum_reading": None,
+                        "vacuum_uom": None,
                         "lifter_weight_value": None,
                         "is_submitted": 1,
                     },
@@ -1969,30 +1737,21 @@ def get_inspection_by_id(
             td = {}
 
         # Also fetch latest PI next inspection date from tank_certificate (if available)
-        try:
-            pi_row2 = db.execute(
-                text(
-                    """
-                    SELECT next_insp_date
-                    FROM tank_certificate
-                    WHERE tank_number = :tn
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                ),
-                {"tn": row_dict.get("tank_number")},
-            ).fetchone()
-            if pi_row2:
-                if hasattr(pi_row2, "_mapping"):
-                    td_pi = pi_row2._mapping.get("next_insp_date")
-                elif isinstance(pi_row2, dict):
-                    td_pi = pi_row2.get("next_insp_date")
-                else:
-                    td_pi = pi_row2[0]
-            else:
-                td_pi = None
-        except Exception:
-            td_pi = None
+        td_pi = fetch_pi_next_inspection_date(db, row_dict.get("tank_number"))
+
+        # Auto-update tank_inspection_details with the latest certificate date if it differs
+        current_pi = row_dict.get("pi_next_inspection_date")
+        if td_pi and td_pi != current_pi:
+            try:
+                db.execute(
+                    text("UPDATE tank_inspection_details SET pi_next_inspection_date = :td_pi, updated_at = NOW() WHERE inspection_id = :id"),
+                    {"td_pi": td_pi, "id": row_dict.get("inspection_id")}
+                )
+                db.commit()
+                row_dict["pi_next_inspection_date"] = td_pi
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to auto-update pi_next_inspection_date for inspection {row_dict.get('inspection_id')}: {e}")
 
         def conv(v):
             return float(v) if isinstance(v, Decimal) else v
@@ -2013,6 +1772,7 @@ def get_inspection_by_id(
             "report_number": row_dict.get("report_number"),
             "lifter_weight": row_dict.get("lifter_weight"),
             "vacuum_reading": row_dict.get("vacuum_reading"),
+            "vacuum_uom": row_dict.get("vacuum_uom"),
             "lifter_weight_value": row_dict.get("lifter_weight_value"),
             "is_submitted": is_submitted,
             # -- authoritative tank details (sourced from tank_details table)
@@ -2040,27 +1800,21 @@ def get_latest_draft_inspection(
 ):
     """
     Return the latest unsubmitted inspection_id for the given tank_id
-    belonging to the current emp_id, or inspection_id = None if no draft exists.
+    or inspection_id = None if no draft exists.
     """
     try:
-        emp_id_val = resolve_emp_id(current_user)
-        if not emp_id_val:
-            return error_resp("User authentication required", 401)
+        query_sql = """
+            SELECT inspection_id
+            FROM tank_inspection_details
+            WHERE tank_id = :tid
+              AND (is_submitted = 0 OR is_submitted IS NULL)
+              AND (web_submitted = 0 OR web_submitted IS NULL)
+              AND (is_reviewed = 0 OR is_reviewed IS NULL)
+            ORDER BY inspection_id DESC LIMIT 1
+        """
+        params = {"tid": tank_id}
 
-        row = db.execute(
-            text(
-                """
-                SELECT inspection_id
-                FROM tank_inspection_details
-                WHERE tank_id = :tid
-                  AND emp_id = :eid
-                  AND is_submitted = 0
-                ORDER BY inspection_id DESC
-                LIMIT 1
-                """
-            ),
-            {"tid": tank_id, "eid": emp_id_val},
-        ).fetchone()
+        row = db.execute(text(query_sql), params).fetchone()
 
         inspection_id = None
         if row:
@@ -2082,103 +1836,7 @@ def get_latest_draft_inspection(
 # -------------------------
 # Delete lifter weight endpoint (keeps same semantics)
 # -------------------------
-@router.delete("/{inspection_id}/lifter_weight", status_code=200)
-def delete_lifter_weight(inspection_id: int, db: Session = Depends(get_db), current_user: Optional[dict] = Depends(get_current_user)):
-    try:
-        # Try to fetch thumbnail column as well
-        try:
-            row = db.execute(text("SELECT inspection_id, tank_number, lifter_weight, lifter_weight_thumbnail, is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
-        except Exception:
-            row = db.execute(text("SELECT inspection_id, tank_number, lifter_weight, is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
 
-        if not row:
-            return error_resp(f"Inspection {inspection_id} not found", 404)
-            
-        # Submission check for role_id 2
-        row_dict_check = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-        is_submitted = int(row_dict_check.get("is_submitted", 0))
-        web_submitted = int(row_dict_check.get("web_submitted", 0))
-        role_id = current_user.role_id
-        
-        if (is_submitted == 1 or web_submitted == 1) and role_id == 2:
-            return error_resp("Cannot delete images for submitted inspection", 403)
-
-        thumb_rel = None
-        if hasattr(row, "_mapping"):
-            rel = row._mapping.get("lifter_weight")
-            thumb_rel = row._mapping.get("lifter_weight_thumbnail") if "lifter_weight_thumbnail" in row._mapping else None
-        else:
-            try:
-                rel = row[2]
-                if len(row) > 3:
-                    thumb_rel = row[3]
-            except Exception:
-                rel = None
-
-        if not rel:
-            return error_resp("No lifter weight image present for this inspection", 404)
-
-        # Delete Original
-        try:
-            abs_path = os.path.join(IMAGES_ROOT_DIR, *rel.split("/"))
-            if os.path.exists(abs_path):
-                try:
-                    os.remove(abs_path)
-                except Exception:
-                    logger.debug("Could not remove lifter file %s", abs_path, exc_info=True)
-        except Exception:
-             pass
-
-        # Delete Thumbnail (Explicit Path)
-        if thumb_rel:
-            try:
-                thumb_abs = os.path.join(IMAGES_ROOT_DIR, *thumb_rel.split("/"))
-                if os.path.exists(thumb_abs):
-                    os.remove(thumb_abs)
-            except Exception:
-                pass
-        
-        # Legacy Thumbnail Cleanup (Same folder)
-        try:
-            folder = os.path.dirname(abs_path)
-            base_no_ext = os.path.splitext(os.path.basename(abs_path))[0]
-            if os.path.isdir(folder):
-                for fn in os.listdir(folder):
-                    if base_no_ext in fn and "thumb" in fn:
-                        try:
-                            os.remove(os.path.join(folder, fn))
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
-        try:
-            # Try to nullify both columns
-            try:
-                db.execute(text("UPDATE tank_inspection_details SET lifter_weight = NULL, lifter_weight_thumbnail = NULL, updated_at = NOW() WHERE inspection_id = :id"), {"id": inspection_id})
-            except Exception:
-                db.execute(text("UPDATE tank_inspection_details SET lifter_weight = NULL, updated_at = NOW() WHERE inspection_id = :id"), {"id": inspection_id})
-            
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.error("Failed to clear lifter_weight DB column", exc_info=True)
-            return error_resp("Failed to remove lifter weight reference from DB", 500)
-
-        return success_resp("Lifter weight image deleted", {"inspection_id": inspection_id}, 200)
-    except Exception as e:
-        logger.error(f"Error deleting lifter weight for inspection {inspection_id}: {e}", exc_info=True)
-        return error_resp("Error deleting lifter weight", 500)
-    
-@router.put("/{inspection_id}/lifter_weight")
-def update_lifter_weight(inspection_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: Optional[dict] = Depends(get_current_user)):
-    """
-    Update (Replace) the lifter weight image for an inspection.
-    This logic calls the existing upload function but exposes it via PUT
-    for semantic correctness (Replace existing resource).
-    """
-    # We reuse the logic from the existing POST function
-    return upload_lifter_weight(inspection_id, file, db)
 
 # ----------------------------
 # SUBMIT INSPECTION (Finalize)
@@ -2209,7 +1867,17 @@ def submit_inspection(
         
         # 2a. Check inspection row
         try:
-            insp_row = db.execute(text("SELECT * FROM tank_inspection_details WHERE inspection_id = :id LIMIT 1"), {"id": inspection_id}).fetchone()
+            insp_row = db.execute(
+                text("""
+                    SELECT ti.*, t.product_id, t.safety_valve_brand_id
+                    FROM tank_inspection_details ti
+                    LEFT JOIN tank_details t ON ti.tank_id = t.tank_id
+                    WHERE ti.inspection_id = :id
+                    LIMIT 1
+                """),
+                {"id": inspection_id}
+            ).fetchone()
+
             if hasattr(insp_row, "_mapping"):
                 insp = dict(insp_row._mapping)
             elif isinstance(insp_row, dict):
@@ -2234,7 +1902,7 @@ def submit_inspection(
                     if isinstance(v, (int, float)) and int(v) == 0:
                         issues["inspection"].append({"field": f, "reason": "zero or invalid"})
 
-            # Validate PI next inspection date
+            # Validate PI next inspection date strictly from the inspection row
             pi_keys = ["pi_next_inspection_date", "pi_next_insp_date", "next_insp_date", "pi_nextinsp_date"]
             pi_found = False
             for k in pi_keys:
@@ -2242,27 +1910,7 @@ def submit_inspection(
                 if v is not None and not (isinstance(v, str) and v.strip() == ""):
                     pi_found = True
                     break
-            # If not found in inspection, check tank_certificate
-            if not pi_found:
-                tank_id = insp.get("tank_id")
-                if tank_id:
-                    try:
-                        row = db.execute(
-                            text(
-                                """
-                                SELECT next_insp_date
-                                FROM tank_certificate
-                                WHERE tank_id = :tank_id
-                                ORDER BY next_insp_date IS NULL ASC, next_insp_date DESC
-                                LIMIT 1
-                                """
-                            ),
-                            {"tank_id": tank_id},
-                        ).fetchone()
-                        if row and row[0]:
-                            pi_found = True
-                    except Exception:
-                        pass
+                    
             if not pi_found:
                 issues["inspection"].append({"field": "pi_next_inspection_date", "reason": "null or empty"})
 
@@ -2451,42 +2099,57 @@ def review_finalize_inspection(
         # Insert into inspection_history
         try:
             # Fetch the updated record
-            record = db.execute(text("SELECT * FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
+            # JOIN with tank_details to get product_id and safety_valve_brand_id which aren't in ti table
+            record = db.execute(
+                text("""
+                    SELECT ti.*, t.product_id, t.safety_valve_brand_id
+                    FROM tank_inspection_details ti
+                    LEFT JOIN tank_details t ON ti.tank_id = t.tank_id
+                    WHERE ti.inspection_id = :id
+                """),
+                {"id": inspection_id}
+            ).fetchone()
+
             if record:
+                # Use mapping/getattr to be safe with row object
+                # Some environments might return row, others mapping
+                r = record._mapping if hasattr(record, "_mapping") else dict(zip(record.keys(), record))
+
                 history_entry = InspectionHistory(
-                    inspection_id=record.inspection_id,
-                    inspection_date=record.inspection_date,
-                    created_at=record.created_at,
-                    updated_at=record.updated_at,
-                    report_number=record.report_number,
-                    tank_id=record.tank_id,
-                    tank_number=record.tank_number,
-                    status_id=record.status_id,
-                    product_id=record.product_id,
-                    inspection_type_id=record.inspection_type_id,
-                    location_id=record.location_id,
-                    working_pressure=record.working_pressure,
-                    design_temperature=record.design_temperature,
-                    frame_type=record.frame_type,
-                    cabinet_type=record.cabinet_type,
-                    mfgr=record.mfgr,
-                    safety_valve_brand_id=record.safety_valve_brand_id,
-                    safety_valve_model_id=record.safety_valve_model_id,
-                    safety_valve_size_id=record.safety_valve_size_id,
-                    pi_next_inspection_date=record.pi_next_inspection_date,
-                    notes=record.notes,
-                    lifter_weight=record.lifter_weight,
-                    lifter_weight_thumbnail=record.lifter_weight_thumbnail,
-                    vacuum_reading=record.vacuum_reading,
-                    lifter_weight_value=record.lifter_weight_value,
-                    emp_id=record.emp_id,
-                    operator_id=record.operator_id,
-                    ownership=record.ownership,
-                    is_submitted=record.is_submitted,
-                    is_reviewed=record.is_reviewed,
-                    reviewed_by=record.reviewed_by,
-                    created_by=record.created_by,
-                    updated_by=record.updated_by,
+                    inspection_id=r["inspection_id"],
+                    inspection_date=r["inspection_date"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                    report_number=r["report_number"],
+                    tank_id=r["tank_id"],
+                    tank_number=r["tank_number"],
+                    status_id=r["status_id"],
+                    product_id=r.get("product_id"),
+                    inspection_type_id=r["inspection_type_id"],
+                    location_id=r["location_id"],
+                    working_pressure=r["working_pressure"],
+                    design_temperature=r["design_temperature"],
+                    frame_type=r["frame_type"],
+                    cabinet_type=r["cabinet_type"],
+                    mfgr=r["mfgr"],
+                    safety_valve_brand_id=r.get("safety_valve_brand_id"),
+                    safety_valve_model_id=r["safety_valve_model_id"],
+                    safety_valve_size_id=r["safety_valve_size_id"],
+                    pi_next_inspection_date=r["pi_next_inspection_date"],
+                    notes=r["notes"],
+                    lifter_weight=r.get("lifter_weight"),
+                    lifter_weight_thumbnail=r.get("lifter_weight_thumbnail"),
+                    vacuum_reading=r["vacuum_reading"],
+                    vacuum_uom=r["vacuum_uom"],
+                    lifter_weight_value=r["lifter_weight_value"],
+                    emp_id=r["emp_id"],
+                    operator_id=r["operator_id"],
+                    ownership=r["ownership"],
+                    is_submitted=r["is_submitted"],
+                    is_reviewed=r["is_reviewed"],
+                    reviewed_by=r["reviewed_by"],
+                    created_by=r["created_by"],
+                    updated_by=r["updated_by"],
                     history_date=func.now()
                 )
                 db.add(history_entry)
@@ -2540,7 +2203,17 @@ def get_inspection_history(
             ORDER BY ih.history_date DESC
         """)).fetchall()
 
-        history = [dict(r._mapping) for r in results]
+        history = []
+        for r in results:
+            d = dict(r._mapping)
+            # Format report_number dynamically to insert inspection_type
+            report_num = d.get("report_number")
+            itype_name = d.get("inspection_type_name")
+            if report_num and itype_name and report_num.startswith("SG-T1-"):
+                normalized_name = itype_name.upper().replace("-", "").replace(" ", "")
+                if normalized_name in ["ONHIRE", "OFFHIRE", "CONDITION"]:
+                    d["report_number"] = report_num.replace("SG-T1-", f"SG-{normalized_name}-T1-", 1)
+            history.append(d)
 
         return success_resp("Inspection history fetched", history, 200)
 
@@ -2548,9 +2221,7 @@ def get_inspection_history(
         logger.exception("Error fetching inspection history")
         return error_resp("Failed to fetch history", 500)
 
-# -----------------------------
-# GET CURRENT USER INFO
-# -----------------------------
+
 @router.get("/user/me")
 def get_current_user_info(current_user: Optional[dict] = Depends(get_current_user)):
     """Return basic info about the currently authenticated user.

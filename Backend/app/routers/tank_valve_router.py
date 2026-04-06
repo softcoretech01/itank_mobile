@@ -39,6 +39,7 @@ VALVE_FEATURES_LIST = [
 ]
 
 class ValveItem(BaseModel):
+    id: Optional[int] = None
     feature: str
     status_id: int
 
@@ -59,6 +60,7 @@ def get_valves(tank_id: int, db: Session = Depends(get_db)):
         "tank_id": tank_id,
         "valves": [
             {
+                "id": v.id,
                 "feature": v.features,
                 "status_id": v.status_id,
             }
@@ -86,8 +88,10 @@ def create_valves(
             modified_by=user_id
         )
         db.add(new_valve)
+        db.flush() # Populate ID for response
         
         resp_item = item.dict()
+        resp_item['id'] = new_valve.id
         resp_item['status'] = status_str
         response_valves.append(resp_item)
     
@@ -106,23 +110,29 @@ def update_valves(
 ):
     user_id = get_user_id(authorization)
     existing = db.query(InspectionValve).filter(InspectionValve.tank_id == data.tank_id).all()
-    existing_map = {v.features: v for v in existing}
+    # Map by ID if available, otherwise names
+    existing_id_map = {v.id: v for v in existing if v.id is not None}
+    existing_name_map = {v.features: v for v in existing}
     
     response_valves = []
     
     for item in data.valves:
         status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
-        
-        if item.feature in existing_map:
-            record = existing_map[item.feature]
-            if record.status_id != item.status_id:
-                record.status_id = item.status_id
-                record.status = status_str
-            
+        record = None
+
+        if item.id and item.id in existing_id_map:
+            record = existing_id_map[item.id]
+        elif item.feature in existing_name_map:
+            record = existing_name_map[item.feature]
+
+        if record:
+            # Update both status and name (edited feature)
+            record.features = item.feature
+            record.status_id = item.status_id
+            record.status = status_str
             record.modified_by = user_id
-            
         else:
-            new_valve = InspectionValve(
+            record = InspectionValve(
                 tank_id=data.tank_id,
                 features=item.feature,
                 status_id=item.status_id,
@@ -130,9 +140,11 @@ def update_valves(
                 created_by=user_id,
                 modified_by=user_id
             )
-            db.add(new_valve)
+            db.add(record)
             
+        db.flush() # Ensure record.id is populated
         resp_item = item.dict()
+        resp_item['id'] = record.id
         resp_item['status'] = status_str
         response_valves.append(resp_item)
 

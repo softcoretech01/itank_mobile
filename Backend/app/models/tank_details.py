@@ -5,7 +5,7 @@ class TankDetails(Base):
     __tablename__ = "tank_details"
 
     id = Column(Integer, primary_key=True, index=True)
-    tank_id = Column(Integer, ForeignKey("tank_header.id"))
+    tank_id = Column(Integer, ForeignKey("tank_header.id"), unique=True, index=True)
     tank_number = Column(String(50), ForeignKey("tank_header.tank_number"), nullable=False)
     tank_iso_code = Column(String(255), nullable=True)  # ISO code label from master
     # Allow multiple standard names stored as comma-separated values
@@ -30,6 +30,8 @@ class TankDetails(Base):
     frame_type = Column(String(100), nullable=True)      # Frame type label from master
     color_body_frame = Column(String(100), nullable=True)
     evacuation_valve = Column(String(100), nullable=True)
+    product_id = Column(Integer, index=True)
+    safety_valve_brand_id = Column(Integer, index=True)
     tank_number_image_path = Column(String(255), nullable=True)
     remark = Column(Text, nullable=True)
     ownership = Column(String(100), nullable=True)  # Ownership name from ownership_master

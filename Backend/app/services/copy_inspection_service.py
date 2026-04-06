@@ -53,6 +53,12 @@ class CopyInspectionService:
         else:
             new_data["created_by"] = getattr(current_user, "login_name", "System")
             new_data["emp_id"] = getattr(current_user, "emp_id", None)
+            
+        # Refetch pi_next_inspection_date in case it was updated in tank_certificate after the original inspection
+        from app.routers.tank_inspection_router import fetch_pi_next_inspection_date
+        pi_date = fetch_pi_next_inspection_date(db, new_data.get("tank_number"))
+        if pi_date:
+            new_data["pi_next_inspection_date"] = pi_date
         
         # Generate new report number
         new_report_number = generate_report_number(db, new_data["inspection_date"], inspection_type_id=new_data["inspection_type_id"])
@@ -77,26 +83,35 @@ class CopyInspectionService:
         ).fetchall()
 
         if checklist_rows:
-            chk_keys = ["inspection_id", "job_id", "job_name", "sub_job_id", "sub_job_description", "sn", "status_id", "comment"]
+            chk_keys = [
+                "inspection_id", "tank_id", "emp_id", "job_id", "job_name", 
+                "sub_job_id", "sub_job_description", "sn", "status_id", 
+                "status", "comment", "image_id_assigned", "flagged"
+            ]
             
             chk_values = []
             for row in checklist_rows:
                 r = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
                 chk_values.append({
                     "inspection_id": new_inspection_id,
+                    "tank_id": r.get("tank_id") or new_data.get("tank_id"),
+                    "emp_id": r.get("emp_id") or new_data.get("emp_id"),
                     "job_id": r.get("job_id"),
                     "job_name": r.get("job_name"),
                     "sub_job_id": r.get("sub_job_id"),
                     "sub_job_description": r.get("sub_job_description"),
                     "sn": r.get("sn"),
                     "status_id": r.get("status_id"),
-                    "comment": r.get("comment")
+                    "status": r.get("status"),
+                    "comment": r.get("comment"),
+                    "image_id_assigned": r.get("image_id_assigned"),
+                    "flagged": r.get("flagged", 0)
                 })
             
             if chk_values:
                 chk_sql = f"""
                     INSERT INTO inspection_checklist ({", ".join(chk_keys)})
-                    VALUES (:inspection_id, :job_id, :job_name, :sub_job_id, :sub_job_description, :sn, :status_id, :comment)
+                    VALUES (:inspection_id, :tank_id, :emp_id, :job_id, :job_name, :sub_job_id, :sub_job_description, :sn, :status_id, :status, :comment, :image_id_assigned, :flagged)
                 """
                 db.execute(text(chk_sql), chk_values)
 
@@ -107,22 +122,31 @@ class CopyInspectionService:
         ).fetchall()
 
         if image_rows:
-            img_keys = ["inspection_id", "tank_number", "image_type", "image_path", "thumbnail_path"]
+            img_keys = [
+                "inspection_id", "tank_number", "image_type", "image_path", 
+                "thumbnail_path", "image_id", "emp_id", "created_date", 
+                "is_marked", "is_assigned"
+            ]
             img_values = []
             for row in image_rows:
                 r = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
                 img_values.append({
                     "inspection_id": new_inspection_id,
-                    "tank_number": new_data.get("tank_number"),
+                    "tank_number": r.get("tank_number") or new_data.get("tank_number"),
                     "image_type": r.get("image_type"),
                     "image_path": r.get("image_path"),
-                    "thumbnail_path": r.get("thumbnail_path")
+                    "thumbnail_path": r.get("thumbnail_path"),
+                    "image_id": r.get("image_id"),
+                    "emp_id": r.get("emp_id") or new_data.get("emp_id"),
+                    "created_date": r.get("created_date") or new_data.get("inspection_date"),
+                    "is_marked": r.get("is_marked", 0),
+                    "is_assigned": r.get("is_assigned", 0)
                 })
             
             if img_values:
                 img_sql = f"""
                     INSERT INTO tank_images ({", ".join(img_keys)})
-                    VALUES (:inspection_id, :tank_number, :image_type, :image_path, :thumbnail_path)
+                    VALUES (:inspection_id, :tank_number, :image_type, :image_path, :thumbnail_path, :image_id, :emp_id, :created_date, :is_marked, :is_assigned)
                 """
                 db.execute(text(img_sql), img_values)
 

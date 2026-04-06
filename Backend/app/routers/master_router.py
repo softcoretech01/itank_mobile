@@ -14,6 +14,10 @@ from app.models.size_master_model import SizeMaster
 from app.models.pump_master_model import PumpMaster
 from app.models.mawp_master_model import MawpMaster
 from app.models.ownership_master_model import OwnershipMaster
+from app.models.product_master_model import ProductMaster
+from app.models.safety_valve_brand_model import SafetyValveBrand
+from app.models.master_valve_model import MasterValve
+from app.models.master_gauge_model import MasterGauge
 
 router = APIRouter(prefix="/api/master", tags=["Master Data"])
 
@@ -68,5 +72,21 @@ def get_all_masters(db: Session = Depends(get_db)):
         "ownership": [
             {"id": row.id, "name": row.ownership_name} 
             for row in db.query(OwnershipMaster).all()
+        ],
+        "products": [
+            {"id": row.id, "name": row.product_name}
+            for row in db.query(ProductMaster).all()
+        ],
+        "safety_valve_brands": [
+            {"id": row.id, "name": row.brand_name}
+            for row in db.query(SafetyValveBrand).all()
+        ],
+        "master_valves": [
+            {"id": row.id, "name": row.valve_name, "status": row.status}
+            for row in db.query(MasterValve).all()
+        ],
+        "master_gauges": [
+            {"id": row.id, "name": row.gauge_name, "status": row.status}
+            for row in db.query(MasterGauge).all()
         ],
     }

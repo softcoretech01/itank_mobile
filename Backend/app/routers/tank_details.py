@@ -28,6 +28,8 @@ from app.models.pump_master_model import PumpMaster
 from app.models.mawp_master_model import MawpMaster
 from app.models.un_code_master_model import UNISOCODEMaster
 from app.routers.tank_inspection_router import get_current_user
+from app.models.multiple_regulation import MultipleRegulation
+from app.models.regulations_master import RegulationsMaster
 
 # --- Helper function to convert "" to None for numeric types ---
 def to_float_or_none(value: any) -> float | None:
@@ -238,12 +240,27 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
             updated_by=emp_id,
             color_body_frame=data.get("color_body_frame"),
             evacuation_valve=data.get("evacuation_valve"),
+            product_id=data.get("product_id"),
+            safety_valve_brand_id=data.get("safety_valve_brand_id"),
             tank_number_image_path=data.get("tank_number_image_path")
         )
 
         db.add(tank_detail)
         db.commit()
         db.refresh(tank_detail)
+
+        # Store multiple regulations
+        if "regulations" in data and isinstance(data["regulations"], list):
+            for reg_id in data["regulations"]:
+                reg_master = db.query(RegulationsMaster).filter(RegulationsMaster.id == reg_id).first()
+                if reg_master:
+                    new_reg = MultipleRegulation(
+                        tank_id=tank.id,
+                        regulation_id=reg_id,
+                        regulation_name=reg_master.regulation_name
+                    )
+                    db.add(new_reg)
+            db.commit()
 
     # Let validation errors (HTTPException) pass through with their own status & message
     except HTTPException as e:
@@ -293,15 +310,20 @@ def upload_tank_image(file: UploadFile = File(...)):
 def get_all_tanks(db: Session = Depends(get_db)):
     results = db.query(Tank, TankDetails).join(TankDetails, Tank.id == TankDetails.tank_id).all()
     
-    return [
-        {
+    response_data = []
+    for r in results:
+        tank_id = r[0].id
+        regulations = db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).all()
+        regulation_names = ", ".join([reg.regulation_name for reg in regulations])
+
+        response_data.append({
             "id": r[0].id,
             "tank_number": r[0].tank_number,
             "status": r[1].status,
             "mfgr": r[1].mfgr,
             "date_mfg": r[1].date_mfg,
             "initial_test": r[1].initial_test,
-            "un_code": r[1].un_code, # CHANGED: Return un_code
+            "un_code": r[1].un_code, 
             "tank_iso_code": r[1].tank_iso_code,
             "standard": r[1].standard,
             "capacity_l": r[1].capacity_l,
@@ -322,10 +344,13 @@ def get_all_tanks(db: Session = Depends(get_db)):
             "created_by": r[0].created_by,
             "color_body_frame": r[1].color_body_frame,
             "evacuation_valve": r[1].evacuation_valve,
-            "tank_number_image_path": to_cdn_url(r[1].tank_number_image_path) if r[1].tank_number_image_path else None
-        }
-        for r in results
-    ]
+            "product_id": r[1].product_id,
+            "safety_valve_brand_id": r[1].safety_valve_brand_id,
+            "tank_number_image_path": to_cdn_url(r[1].tank_number_image_path) if r[1].tank_number_image_path else None,
+            "regulations": regulation_names
+        })
+    
+    return response_data
 
 # --- EXPORT TO EXCEL ---
 @router.get("/export-to-excel")
@@ -459,7 +484,8 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
         "remark", "ownership",
         "working_pressure", "cabinet_type", "frame_type",
         "tank_iso_code", "standard",
-        "color_body_frame", "evacuation_valve", "tank_number_image_path"
+        "color_body_frame", "evacuation_valve", "tank_number_image_path",
+        "product_id", "safety_valve_brand_id"
     ]
 
     for field in detail_fields:
@@ -500,6 +526,23 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
                         setattr(tank_detail, field, s)
             else:
                 setattr(tank_detail, field, value)
+
+    # Handle Multiple Regulations Sync
+    if "regulations" in data and isinstance(data["regulations"], list):
+        # 1. Delete old links
+        db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).delete()
+        
+        # 2. Add new links
+        for reg_id in data["regulations"]:
+            reg_master = db.query(RegulationsMaster).filter(RegulationsMaster.id == reg_id).first()
+            if reg_master:
+                new_reg = MultipleRegulation(
+                    tank_id=tank.id,
+                    regulation_id=reg_id,
+                    regulation_name=reg_master.regulation_name
+                )
+                db.add(new_reg)
+        db.commit()
 
     # Set updated_by for tank_detail
     tank_detail.updated_by = emp_id
@@ -560,6 +603,10 @@ def get_tank_by_id(tank_id: int, db: Session = Depends(get_db)):
     if not tank or not tank_detail:
         raise HTTPException(status_code=404, detail="Tank not found")
 
+    # Fetch Multiple Regulations
+    linked_regulations = db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).all()
+    regulation_ids = [reg.regulation_id for reg in linked_regulations]
+
     return {
         "id": tank.id,
         "tank_number": tank.tank_number,
@@ -589,7 +636,10 @@ def get_tank_by_id(tank_id: int, db: Session = Depends(get_db)):
         "frame_type": tank_detail.frame_type,
         "color_body_frame": tank_detail.color_body_frame,
         "evacuation_valve": tank_detail.evacuation_valve,
+        "product_id": tank_detail.product_id,
+        "safety_valve_brand_id": tank_detail.safety_valve_brand_id,
         "tank_number_image_path": to_cdn_url(tank_detail.tank_number_image_path) if tank_detail.tank_number_image_path else None,
+        "regulations": regulation_ids
     }
 
 @router.get("/by-number/{tank_number}")

@@ -20,7 +20,6 @@ class TankInspectionDetails(Base):
     tank_id = Column(Integer, ForeignKey("tank_details.tank_id", ondelete="SET NULL"), nullable=True, index=True)
     tank_number = Column(String(50), nullable=False, index=True)
     status_id = Column(Integer, nullable=True, index=True)
-    product_id = Column(Integer, nullable=True, index=True)
     inspection_type_id = Column(Integer, nullable=True)
     location_id = Column(Integer, nullable=True)
     working_pressure = Column(String(50), nullable=True)
@@ -28,15 +27,13 @@ class TankInspectionDetails(Base):
     frame_type = Column(String(255))
     cabinet_type = Column(String(255))
     mfgr = Column(String(255))
-    safety_valve_brand_id = Column(Integer, nullable=True, index=True)
     safety_valve_model_id = Column(Integer, nullable=True, index=True)
     safety_valve_size_id = Column(Integer, nullable=True, index=True)
     # Store next inspection as YYYY/MM (string) to accept year/month input format
     pi_next_inspection_date = Column(String(7))
     notes = Column(Text)
-    lifter_weight = Column(String(255), nullable=True)
-    lifter_weight_thumbnail = Column(String(255), nullable=True)
     vacuum_reading = Column(String(50), nullable=True)
+    vacuum_uom = Column(String(20), nullable=True)
     lifter_weight_value = Column(String(50), nullable=True)
     emp_id = Column(Integer, ForeignKey("users.emp_id"), nullable=True, index=True)
     operator_id = Column(Integer, nullable=True, index=True)
@@ -65,7 +62,6 @@ class TankInspectionDetails(Base):
             "report_number": self.report_number,
             "tank_number": self.tank_number,
             "status_id": self.status_id,
-            "product_id": self.product_id,
             "inspection_type_id": self.inspection_type_id,
             "location_id": self.location_id,
             "working_pressure": float(self.working_pressure) if self.working_pressure is not None else None,
@@ -73,14 +69,12 @@ class TankInspectionDetails(Base):
             "design_temperature": self.design_temperature,
             "cabinet_type": self.cabinet_type,
             "mfgr": self.mfgr,
-            "safety_valve_brand_id": self.safety_valve_brand_id,
             "safety_valve_model_id": self.safety_valve_model_id,
             "safety_valve_size_id": self.safety_valve_size_id,
             "pi_next_inspection_date": self.pi_next_inspection_date if self.pi_next_inspection_date else None,
             "notes": self.notes,
-            "lifter_weight": self.lifter_weight,
-            "lifter_weight_thumbnail": self.lifter_weight_thumbnail,
             "vacuum_reading": self.vacuum_reading,
+            "vacuum_uom": self.vacuum_uom,
             "lifter_weight_value": self.lifter_weight_value,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

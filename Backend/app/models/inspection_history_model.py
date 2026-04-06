@@ -38,6 +38,7 @@ class InspectionHistory(Base):
     lifter_weight = Column(String(255), nullable=True)
     lifter_weight_thumbnail = Column(String(255), nullable=True)
     vacuum_reading = Column(String(50), nullable=True)
+    vacuum_uom = Column(String(20), nullable=True)
     lifter_weight_value = Column(String(50), nullable=True)
     emp_id = Column(Integer, nullable=True, index=True)
     operator_id = Column(Integer, nullable=True, index=True)

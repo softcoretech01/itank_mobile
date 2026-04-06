@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session
 from app.models.cargo_master import CargoTankMaster
-from app.models.regulations_master import RegulationsMaster
 from app.models.role_master_model import RoleMaster
 from app.models.role_rights_model import RoleRights
 
@@ -31,38 +30,6 @@ def init_seed_data(db: Session):
             print("CargoTankMaster data already exists. Skipping.")
     except Exception as e:
         print(f"Error seeding CargoTankMaster: {e}")
-        db.rollback()
-
-    # --- 2. Ensure RegulationsMaster table exists and seed ---
-        # --- Create multiple_regulation table if not exists ---
-        try:
-            from app.models.multiple_regulation import MultipleRegulation
-            MultipleRegulation.__table__.create(db.get_bind(), checkfirst=True)
-            print("multiple_regulation table checked/created.")
-        except Exception as e:
-            print(f"Error creating multiple_regulation table: {e}")
-    try:
-        RegulationsMaster.__table__.create(db.get_bind(), checkfirst=True)
-        if not db.query(RegulationsMaster).first():
-            print("Seeding RegulationsMaster data...")
-            regulations = [
-                RegulationsMaster(regulation_name="CSC"),
-                RegulationsMaster(regulation_name="IMDG"),
-                RegulationsMaster(regulation_name="RID"),
-                RegulationsMaster(regulation_name="ADR"),
-                RegulationsMaster(regulation_name="CCC"),
-                RegulationsMaster(regulation_name="BAM"),
-                RegulationsMaster(regulation_name="TIR"),
-                RegulationsMaster(regulation_name="UK-DOT"),
-                RegulationsMaster(regulation_name="US-DOT"),
-            ]
-            db.add_all(regulations)
-            db.commit()
-            print("RegulationsMaster seeded successfully.")
-        else:
-            print("RegulationsMaster data already exists. Skipping.")
-    except Exception as e:
-        print(f"Error seeding RegulationsMaster: {e}")
         db.rollback()
 
         # --- 3. Ensure ManufacturerMaster table exists and seed ---
@@ -189,30 +156,6 @@ def init_seed_data(db: Session):
     except Exception as e:
         print(f"Error seeding CabinetTypeMaster: {e}")
         db.rollback()
-# --- 10. Seed TankCodeISOMaster ---
-    try:
-        from app.models.tankcode_iso_master_model import TankCodeISOMaster
-        tankcode_iso_values = [
-            "T75/22K7",
-            "T75/25K8",
-            "T75/42K5",
-            "T75/45K4",
-            "T75/52K7",
-            "T75/55K3",
-            "T75/M2K2",
-            "T75/22K6",
-            "T75/25K1",
-            "T75/45K8",
-        ]
-        TankCodeISOMaster.__table__.create(db.get_bind(), checkfirst=True)
-        for val in tankcode_iso_values:
-            if not db.query(TankCodeISOMaster).filter_by(tankcode_iso=val).first():
-                db.add(TankCodeISOMaster(tankcode_iso=val))
-        db.commit()
-        print("TankCodeISOMaster seeded successfully.")
-    except Exception as e:
-        print(f"Error seeding TankCodeISOMaster: {e}")
-        db.rollback()
 
     # --- 11. Seed UNISOCODEMaster ---
     try:
@@ -328,4 +271,56 @@ def init_seed_data(db: Session):
             print("RoleRights data already exists. Skipping.")
     except Exception as e:
         print(f"Error seeding RoleRights: {e}")
+        db.rollback()
+
+    # --- Seed MasterValve ---
+    try:
+        from app.models.master_valve_model import MasterValve
+        valves = [
+            "Top Fill - Gas", "Emergency Valve - A3", "S/V - 1",
+            "Iso - Top Fill", "Trycock - 1", "S/V - 2",
+            "Bottom fill - Liq", "Trycock - 2 / 3", "S/V - 3",
+            "Iso - Bottom Fill - A3", "Vacuum Valve", "S/V - 4",
+            "Iso - Top / Bottom", "T-Couple Valve", "S/V - B.Disc",
+            "Drain Valve", "T-Couple DV-6", "S/V Diverter",
+            "Blow Valve", "Liq Connection", "Line SRV - 1",
+            "PB Valve Inlet", "Gas Connection", "Line SRV - 2",
+            "PB Valve Return", "Vent Pipe", "Line SRV - 3",
+            "PB Unit", "Pipe / Support", "Line SRV - 4 / 5",
+            "Sample Valve", "Check Valve", "Out Ves B.Disc"
+        ]
+        MasterValve.__table__.create(db.get_bind(), checkfirst=True)
+        for v in valves:
+            if not db.query(MasterValve).filter_by(valve_name=v).first():
+                db.add(MasterValve(valve_name=v))
+        db.commit()
+        print("MasterValve seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding MasterValve: {e}")
+        db.rollback()
+
+    # --- Seed MasterGauge ---
+    try:
+        from app.models.master_gauge_model import MasterGauge
+        gauges = [
+            "Pressure Gauge", "Tank Number", "Top",
+            "Liquid Gauge", "Co. Logo", "Bottom",
+            "Temp Gauge", "TEIP", "Front",
+            "Gas Phase Valve", "Haz Ship Label", "Rear",
+            "Liquid Phase Valve", "Handling Label", "Left",
+            "Equalizing Valve", "Weight Label", "Right",
+            "Pump - Smith", "T-75 / 22K7 Label", "Cross Member",
+            "Motor", "Tank P&ID Plate", "Cab Door - Rear",
+            "Electrical Panel", "Tank Data Plate", "Cab Door Lock",
+            "Electrical Plug", "Tank CSC Plate", "Paint Condition",
+            "Pump / Motor Mounting", "Std Identification Label", "Reflective Marking"
+        ]
+        MasterGauge.__table__.create(db.get_bind(), checkfirst=True)
+        for g in gauges:
+            if not db.query(MasterGauge).filter_by(gauge_name=g).first():
+                db.add(MasterGauge(gauge_name=g))
+        db.commit()
+        print("MasterGauge seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding MasterGauge: {e}")
         db.rollback()

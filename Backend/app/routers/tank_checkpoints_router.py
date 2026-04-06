@@ -56,7 +56,8 @@ class SubJobItem(BaseModel):
     sn: Optional[str] = None
     title: Optional[str] = None
     comments: Optional[str] = None
-    status_id: Optional[Union[int, str]] = None   # <-- ADDED: allow item-level status
+    status_id: Optional[Union[int, str]] = None
+    image_id_assigned: Optional[Union[int, str]] = None
 
 
 class FullChecklistSection(BaseModel):
@@ -691,10 +692,10 @@ def create_inspection_checklist_bulk(
                     except Exception:
                         pass
 
-                    # ---- INSERT the checklist row (moved OUT of the 'else' fallback) ----
+                    # ---- INSERT the checklist row ----
                     db.execute(text(
-                        "INSERT INTO inspection_checklist (inspection_id, tank_id, emp_id, job_id, job_name, sn, sub_job_id, sub_job_description, status_id, status, comment, flagged, created_at)"
-                        " VALUES (:inspection_id, :tank_id, :emp_id, :job_id, :job_name, :sn, :sub_job_id, :sub_job_description, :status_id, :status, :comment, :flagged, NOW())"
+                        "INSERT INTO inspection_checklist (inspection_id, tank_id, emp_id, job_id, job_name, sn, sub_job_id, sub_job_description, status_id, status, comment, image_id_assigned, flagged, created_at)"
+                        " VALUES (:inspection_id, :tank_id, :emp_id, :job_id, :job_name, :sn, :sub_job_id, :sub_job_description, :status_id, :status, :comment, :image_id_assigned, :flagged, NOW())"
                     ), {
                         "inspection_id": inspection_id,
                         "tank_id": tank_id,
@@ -707,8 +708,23 @@ def create_inspection_checklist_bulk(
                         "status_id": status_id_final,
                         "status": status_name_val,
                         "comment": getattr(item, 'comments', None),
+                        "image_id_assigned": getattr(item, 'image_id_assigned', None) if getattr(item, 'image_id_assigned', None) != "" else None,
                         "flagged": flagged_val,
                     })
+
+                    # Update is_assigned in tank_images if image_id_assigned is provided
+                    assigned_ids_str = getattr(item, 'image_id_assigned', None)
+                    if assigned_ids_str:
+                        # comma-separated string of image_id values
+                        assigned_list = [v.strip() for v in str(assigned_ids_str).split(",") if v.strip()]
+                        if assigned_list:
+                            placeholders = ",".join([f":aid{i}" for i in range(len(assigned_list))])
+                            params = {"insp_id": inspection_id}
+                            for i, aid in enumerate(assigned_list):
+                                params[f"aid{i}"] = aid
+                            db.execute(text(
+                                f"UPDATE tank_images SET is_assigned = 1 WHERE inspection_id = :insp_id AND image_id IN ({placeholders}) AND is_marked = 1"
+                            ), params)
 
                     # Only sync flagged items (status_id == 2) into to_do_list
                     # After inserting inspection_checklist row above:
@@ -953,11 +969,27 @@ def update_checklist_by_inspection(
                         if item_comment is None or str(item_comment).strip() == "":
                             return _error(f"Comment is required when setting status_id {item_status_value} (faulty) for sub_job {item.sub_job_id}", status_code=400)
 
-                    # Update comment if provided
-                    item_comment = getattr(item, 'comments', None)
                     if item_comment is not None and str(item_comment).strip() != "":
                         update_fields.append("comment = %(comment)s")
                         params['comment'] = item_comment
+
+                    # Update image_id_assigned if provided
+                    assigned_ids_str = getattr(item, 'image_id_assigned', None)
+                    if assigned_ids_str is not None:
+                        # Clean empty string to None
+                        clean_assigned = assigned_ids_str if assigned_ids_str != "" else None
+                        update_fields.append("image_id_assigned = %(image_id_assigned)s")
+                        params['image_id_assigned'] = clean_assigned
+                        
+                        # Update is_assigned in tank_images
+                        assigned_list = [v.strip() for v in str(assigned_ids_str).split(",") if v.strip()]
+                        if assigned_list:
+                            # Use query params safely
+                            placeholders = ",".join(["%s"] * len(assigned_list))
+                            cursor.execute(
+                                f"UPDATE tank_images SET is_assigned = 1 WHERE inspection_id = %s AND image_id IN ({placeholders}) AND is_marked = 1",
+                                (inspection_id, *assigned_list)
+                            )
                     
                     # If job_name is missing in the checklist row, populate it from inspection_job
                     if not checklist_row.get('job_name') and checklist_row.get('job_id'):
@@ -1087,7 +1119,8 @@ def get_checklist_by_inspection_id(
                 "job_id": job_id,
                 "sub_job_id": str(item.get("sub_job_id", "")),
                 "status_id": str(item.get("status_id", "")),
-                "comments": item.get("comment", "")
+                "comments": item.get("comment", ""),
+                "image_id_assigned": item.get("image_id_assigned", "")
             })
             try:
                 sid = int(item.get("status_id") or 0)

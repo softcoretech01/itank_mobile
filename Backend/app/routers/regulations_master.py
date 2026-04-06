@@ -1,88 +1,104 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime
+
 from app.database import get_db
 from app.models.regulations_master import RegulationsMaster
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
+from app.routers.tank_inspection_router import get_current_user, success_resp, error_resp
 
 router = APIRouter()
 
-class RegulationBase(BaseModel):
+class RegulationCreate(BaseModel):
     regulation_name: str
-    created_by: Optional[int] = None
-    updated_by: Optional[int] = None
-
-class RegulationCreate(RegulationBase):
-    pass
 
 class RegulationUpdate(BaseModel):
     regulation_name: Optional[str] = None
-    updated_by: Optional[int] = None
+    status: Optional[int] = None
 
-class RegulationOut(RegulationBase):
-    id: int
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-# --------------------------
-# CRUD Endpoints
-# --------------------------
-
-@router.post("/", response_model=RegulationOut)
-def create_regulation(data: RegulationCreate, db: Session = Depends(get_db)):
-    existing = db.query(RegulationsMaster).filter_by(regulation_name=data.regulation_name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Regulation already exists")
-
-    new_reg = RegulationsMaster(
-        regulation_name=data.regulation_name,
-        created_by=data.created_by
-    )
-    db.add(new_reg)
-    db.commit()
-    db.refresh(new_reg)
-    return new_reg
-
-
-@router.get("/", response_model=List[RegulationOut])
+@router.get("/")
 def get_all_regulations(db: Session = Depends(get_db)):
-    return db.query(RegulationsMaster).order_by(RegulationsMaster.id).all()
+    try:
+        results = db.query(RegulationsMaster).order_by(RegulationsMaster.id.desc()).all()
+        return success_resp("All regulations fetched", results)
+    except Exception as e:
+        return error_resp(f"Error fetching regulations: {str(e)}", 500)
 
+@router.get("/{id}")
+def get_regulation_by_id(id: int, db: Session = Depends(get_db)):
+    try:
+        result = db.query(RegulationsMaster).filter(RegulationsMaster.id == id).first()
+        if not result:
+            return error_resp("Regulation not found", 404)
+        return success_resp("Regulation fetched successfully", result)
+    except Exception as e:
+        return error_resp(f"Error fetching regulation: {str(e)}", 500)
 
-@router.get("/{reg_id}", response_model=RegulationOut)
-def get_regulation(reg_id: int, db: Session = Depends(get_db)):
-    reg = db.query(RegulationsMaster).filter_by(id=reg_id).first()
-    if not reg:
-        raise HTTPException(status_code=404, detail="Regulation not found")
-    return reg
+@router.post("/")
+def create_regulation(
+    data: RegulationCreate, 
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    try:
+        # Check if exists
+        existing = db.query(RegulationsMaster).filter(RegulationsMaster.regulation_name == data.regulation_name).first()
+        if existing:
+            return error_resp(f"Regulation '{data.regulation_name}' already exists", 400)
 
+        # Resolve emp_id from current_user
+        emp_id = None
+        if hasattr(current_user, "emp_id"):
+            emp_id = int(current_user.emp_id)
 
-@router.put("/{reg_id}", response_model=RegulationOut)
-def update_regulation(reg_id: int, data: RegulationUpdate, db: Session = Depends(get_db)):
-    reg = db.query(RegulationsMaster).filter_by(id=reg_id).first()
-    if not reg:
-        raise HTTPException(status_code=404, detail="Regulation not found")
+        new_reg = RegulationsMaster(
+            regulation_name=data.regulation_name,
+            status=1,
+            created_by=emp_id,
+            updated_by=emp_id
+        )
+        db.add(new_reg)
+        db.commit()
+        db.refresh(new_reg)
+        return success_resp("Regulation created successfully", new_reg, 201)
+    except Exception as e:
+        db.rollback()
+        return error_resp(f"Error creating regulation: {str(e)}", 500)
 
-    if data.regulation_name:
-        reg.regulation_name = data.regulation_name
-    if data.updated_by is not None:
-        reg.updated_by = data.updated_by
+@router.put("/{id}")
+def update_regulation(
+    id: int, 
+    data: RegulationUpdate, 
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    try:
+        reg = db.query(RegulationsMaster).filter(RegulationsMaster.id == id).first()
+        if not reg:
+            return error_resp("Regulation not found", 404)
 
-    db.commit()
-    db.refresh(reg)
-    return reg
+        if data.regulation_name is not None:
+            # Check unique
+            if data.regulation_name != reg.regulation_name:
+                existing = db.query(RegulationsMaster).filter(RegulationsMaster.regulation_name == data.regulation_name).first()
+                if existing:
+                    return error_resp(f"Regulation '{data.regulation_name}' already exists", 400)
+            reg.regulation_name = data.regulation_name
 
+        if data.status is not None:
+            reg.status = data.status
 
-@router.delete("/{reg_id}")
-def delete_regulation(reg_id: int, db: Session = Depends(get_db)):
-    reg = db.query(RegulationsMaster).filter_by(id=reg_id).first()
-    if not reg:
-        raise HTTPException(status_code=404, detail="Regulation not found")
+        # Resolve emp_id from current_user
+        emp_id = None
+        if hasattr(current_user, "emp_id"):
+            emp_id = int(current_user.emp_id)
+        
+        reg.updated_by = emp_id
 
-    db.delete(reg)
-    db.commit()
-    return {"message": "Regulation deleted successfully"}
+        db.commit()
+        db.refresh(reg)
+        return success_resp("Regulation updated successfully", reg)
+    except Exception as e:
+        db.rollback()
+        return error_resp(f"Error updating regulation: {str(e)}", 500)

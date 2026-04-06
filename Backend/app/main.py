@@ -19,15 +19,15 @@ from app.seed import init_seed_data
 
 # Import all routers
 from app.routers import (
-    tank_details,
-    tank_regulations, regulations_master,
+    tank_details, regulations_master,
     cargo_master, cargo_tank,
     tank_certificate, tank_drawings,
     valve_test_report, ppt_router,
     tank_image_router, tank_inspection_router, auth_router,
     validation_router, to_do_list_router, tank_checklist_router,
     tank_valve_router, tank_gauge_router,
-    tank_valve_and_shell_router, other_images_router
+    tank_valve_and_shell_router, other_images_router,
+    tank_code_master_router
 )
 from app.routers.tank_checkpoints_router import router as tank_checkpoints_router
 from app.routers import master_router
@@ -104,8 +104,10 @@ class UniformResponseMiddleware(BaseHTTPMiddleware):
             return JSONResponse(content=wrapped, status_code=response.status_code)
 
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             logger.exception("Error in UniformResponseMiddleware")
-            return JSONResponse(content={"success": False, "message": "Internal server error", "data": {}}, status_code=500)
+            return JSONResponse(content={"success": False, "message": f"Internal server error: {str(exc)}", "data": {}}, status_code=500)
 
 
 # Attach middleware
@@ -141,7 +143,6 @@ app.include_router(auth_router.router)
 app.include_router(tank_details.router, prefix="/api/tanks", tags=["Tanks"])
 app.include_router(tank_inspection_router.router)
 app.include_router(tank_certificate.router, prefix="/api/tank-certificates", tags=["Tank Certificates"])
-app.include_router(tank_regulations.router, prefix="/api/tank-regulations", tags=["Tank Regulations"])
 # Reload trigger 2
 app.include_router(regulations_master.router, prefix="/api/regulations-master", tags=["Regulations Master"])
 app.include_router(cargo_master.router, prefix="/api/cargo-master", tags=["Cargo Master"])
@@ -159,6 +160,7 @@ app.include_router(to_do_list_router.router)
 app.include_router(tank_checklist_router.router)
 app.include_router(validation_router.router)
 app.include_router(master_router.router)
+app.include_router(tank_code_master_router.router)
 # Serve uploaded images statically
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")  # TODO: New files are served via S3/CloudFront; this mount is for legacy local uploads only
 

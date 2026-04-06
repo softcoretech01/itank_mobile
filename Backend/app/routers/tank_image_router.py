@@ -3,10 +3,12 @@ MAX_UPLOAD_SIZE = 5 * 1024 * 1024
 THUMBNAIL_SIZE = (200, 200)
 import os
 JWT_SECRET = os.getenv("JWT_SECRET", "replace-with-real-secret")
+# app/routers/tank_image_router.py
+
 import uuid
 from datetime import date, datetime
 from typing import Optional, Dict, List, Any, Union
-import jwt
+import jwt  # PyJWT
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, status, Header, Request
 from pymysql.cursors import DictCursor
 from io import BytesIO
@@ -273,6 +275,7 @@ async def batch_upload_images(
     safetyvalve: Optional[Union[UploadFile, str]] = File(None),
     levelpressuregauge: Optional[Union[UploadFile, str]] = File(None),
     vacuumreading: Optional[Union[UploadFile, str]] = File(None),
+    marked_types: Optional[str] = Query(None),
     Authorization: Optional[str] = Header(None),
 ):
     """
@@ -471,12 +474,19 @@ async def batch_upload_images(
                     saved_info = save_uploaded_file(file_obj, tank_number, image_type_id, index=seq_index, slug_override=slug_override)
                     saved_file_paths.append(saved_info["image_path"]) 
                     final_slug = saved_info.get("resolved_image_type_slug") or slug_key
+                    
+                    # determine is_marked from the passed list
+                    is_marked_val = 0
+                    if marked_types:
+                        m_list = [s.strip().lower() for s in marked_types.split(",")]
+                        if slug_key.lower() in m_list:
+                            is_marked_val = 1
 
                     # --- REPLACE WITH THIS FIXED QUERY ---
                     cursor.execute("""
                         INSERT INTO tank_images 
-                        (emp_id, inspection_id, image_id, tank_number, image_type, image_path, thumbnail_path, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                        (emp_id, inspection_id, image_id, tank_number, image_type, image_path, thumbnail_path, created_at, is_marked)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
                     """, (
                         emp_to_use, 
                         derived_insp_id, 
@@ -484,7 +494,8 @@ async def batch_upload_images(
                         tank_number, 
                         final_slug, 
                         saved_info["image_path"],
-                        saved_info.get("thumbnail_path")  # <--- This is the important addition!
+                        saved_info.get("thumbnail_path"),
+                        is_marked_val
                     ))
                     # -------------------------------------
 
@@ -527,7 +538,7 @@ def get_images_by_inspection(inspection_id: int):
         conn = get_db_connection()
         try:
             with conn.cursor(DictCursor) as cursor:
-                cursor.execute("SELECT * FROM tank_images WHERE inspection_id = %s ORDER BY created_at ASC", (inspection_id,))
+                cursor.execute("SELECT id, emp_id, inspection_id, image_id, image_type, image_path, thumbnail_path, created_at, is_marked FROM tank_images WHERE inspection_id = %s ORDER BY created_at ASC", (inspection_id,))
                 rows = cursor.fetchall() or []
 
                 # derive inspection-level tank_id and emp_id from tank_inspection_details
@@ -595,6 +606,7 @@ async def replace_images_by_inspection_id(
     safetyvalve: Optional[Union[UploadFile, str]] = File(None),
     levelpressuregauge: Optional[Union[UploadFile, str]] = File(None),
     vacuumreading: Optional[Union[UploadFile, str]] = File(None),
+    marked_types: Optional[str] = Query(None),
     Authorization: Optional[str] = Header(None),
 ):
     """
@@ -788,18 +800,16 @@ async def replace_images_by_inspection_id(
                 if row.get("thumbnail_path"):
                     delete_file(row["thumbnail_path"])
 
-            # --- INSERT NEW IMAGES ---
+                    # --- INSERT NEW IMAGES ---
             for slug_key, file_list in files_to_process.items():
                 type_info = IMAGE_TYPES.get(slug_key)
                 image_type_id = type_info["image_type_id"]
 
                 for idx, file_obj in enumerate(file_list, start=1):
-                    if not hasattr(file_obj, "content_type") or not file_obj.content_type.startswith(
-                        "image/"
-                    ):
+                    if not hasattr(file_obj, "content_type") or not file_obj.content_type.startswith("image/"):
                         continue
 
-                    # Underside logic
+                    # Determine slug override and sequence index (especially for underside views)
                     slug_override = None
                     seq_index = None
                     if slug_key.startswith("undersideview"):
@@ -818,59 +828,100 @@ async def replace_images_by_inspection_id(
                             except:
                                 pass
 
-                    saved_info = save_uploaded_file(
-                        file_obj,
-                        tank_number,
-                        image_type_id,
-                        index=seq_index,
-                        slug_override=slug_override,
-                    )
-                    saved_file_paths.append(saved_info["image_path"])
+                    saved_info = save_uploaded_file(file_obj, tank_number, image_type_id, index=seq_index, slug_override=slug_override)
+                    saved_file_paths.append(saved_info["image_path"]) 
                     final_slug = saved_info.get("resolved_image_type_slug") or slug_key
 
-                    cursor.execute(
-                        """
-                        INSERT INTO tank_images 
-                        (emp_id, inspection_id, image_id, tank_number,
-                         image_type, image_path, thumbnail_path, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                        """,
-                        (
-                            emp_to_use,
-                            inspection_id,
-                            image_type_id,
-                            tank_number,
-                            final_slug,
-                            saved_info["image_path"],
-                            saved_info.get("thumbnail_path"),
-                        ),
-                    )
+                    is_marked_val = 0
+                    if marked_types:
+                        m_list = [s.strip().lower() for s in marked_types.split(",")]
+                        if slug_key.lower() in m_list:
+                            is_marked_val = 1
 
-                    successful_inserts.append(
-                        {
-                            "image_type_id": image_type_id,
-                            "filename": saved_info["image_path"],
-                        }
-                    )
+                    cursor.execute("""
+                        INSERT INTO tank_images 
+                        (emp_id, inspection_id, image_id, tank_number, image_type, image_path, thumbnail_path, created_at, is_marked)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                    """, (
+                        emp_to_use, 
+                        inspection_id, 
+                        image_type_id, 
+                        tank_number, 
+                        final_slug, 
+                        saved_info["image_path"],
+                        saved_info.get("thumbnail_path"),
+                        is_marked_val
+                    ))
+
+                    successful_inserts.append({
+                        "image_type_id": image_type_id,
+                        "filename": saved_info["image_path"]
+                    })
 
         conn.commit()
-        return {
-            "success": True,
-            "message": f"Replaced images. Uploaded {len(successful_inserts)} new images.",
-            "data": successful_inserts,
-        }
+        return {"success": True, "message": f"Updated {len(successful_inserts)} images.", "data": successful_inserts}
 
     except Exception as e:
         conn.rollback()
-        for p in saved_file_paths:
-            delete_file(p)
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(
-            status_code=500, detail=f"Replace images failed: {str(e)}"
-        )
+        for p in saved_file_paths: delete_file(p)
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
     finally:
         conn.close()
+
+# ------------------------------------------------------------------
+# ENDPOINT: Toggle image mark (PUT)
+# ------------------------------------------------------------------
+@router.put("/mark/{image_pk}")
+def toggle_image_mark(image_pk: int, is_marked: int = Query(...)):
+    """
+    Toggle is_marked field in tank_images table for a specific row id (primary key).
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor(DictCursor) as cursor:
+            # check existence
+            cursor.execute("SELECT id FROM tank_images WHERE id = %s", (image_pk,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Image record not found.")
+
+            # update
+            cursor.execute("UPDATE tank_images SET is_marked = %s WHERE id = %s", (is_marked, image_pk))
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+    return {"success": True, "message": "Image mark updated."}
+
+# ------------------------------------------------------------------
+# ENDPOINT: Get marked image IDs and names by inspection
+# ------------------------------------------------------------------
+@router.get("/marked/{inspection_id}")
+def get_marked_images(inspection_id: int):
+    """
+    Get image_id and human-readable image_name for all marked images in an inspection.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor(DictCursor) as cursor:
+            # Joining with image_type table to get the human-readable name
+            cursor.execute("""
+                SELECT ti.image_id, it.image_type as image_name 
+                FROM tank_images ti
+                JOIN image_type it ON ti.image_id = it.id
+                WHERE ti.inspection_id = %s AND ti.is_marked = 1
+                ORDER BY ti.created_at ASC
+            """, (inspection_id,))
+            rows = cursor.fetchall() or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+    return {"success": True, "data": rows}
 
 # ------------------------------------------------------------------
 # ENDPOINT: Delete single image by id (DELETE) - requires Authorization header

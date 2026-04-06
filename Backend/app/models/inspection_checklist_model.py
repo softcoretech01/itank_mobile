@@ -33,6 +33,7 @@ class InspectionChecklist(Base):
     status = Column(String(32), nullable=True)
 
     comment = Column(Text, nullable=True)
+    image_id_assigned = Column(String(255), nullable=True)
     flagged = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

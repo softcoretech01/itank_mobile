@@ -13,6 +13,7 @@ class TankInfoData {
   final String? safetyValve;
   final int? inspectionId;
   final String? vacuumReading;
+  final String? vacuumReadingUom;
   final String? lifterWeightValue;
 
   TankInfoData({
@@ -28,6 +29,7 @@ class TankInfoData {
     this.safetyValve,
     this.inspectionId,
     this.vacuumReading,
+    this.vacuumReadingUom,
     this.lifterWeightValue,
   });
 
@@ -44,6 +46,7 @@ class TankInfoData {
       "safety_valve_id": safetyValve,
       "inspection_id": inspectionId,
       "vacuum_reading": vacuumReading,
+      "vacuum_reading_uom": vacuumReadingUom,
       "lifter_weight_value": lifterWeightValue,
       // Photos are handled separately (multipart)
     };

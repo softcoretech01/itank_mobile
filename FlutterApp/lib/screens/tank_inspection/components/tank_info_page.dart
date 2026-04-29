@@ -35,6 +35,7 @@ class TankInfoPageState extends State<TankInfoPage> {
   final TextEditingController vacuumReadingController = TextEditingController();
   final TextEditingController lifterWeightValueController =
       TextEditingController();
+  String selectedVacuumUom = "Micron";
 
   // Dropdowns
   TankStatus? statusMaster;
@@ -107,13 +108,12 @@ class TankInfoPageState extends State<TankInfoPage> {
       inspectionType: "${inspectionMaster?.inspectionTypeId}",
       lifterWeight: lifterWeightController.text,
       lifterPhoto: lifterPhoto,
-      product: "${productMaster?.productId}",
       location: "${locationMaster?.locationId}",
-      safetyValve: "${safetyValveMaster?.id}",
       inspectionId:
           currentInspection?.data?.inspectionId ??
           context.read<TankInspectionBloc>().state.inspectionId,
       vacuumReading: vacuumReadingController.text,
+      vacuumReadingUom: selectedVacuumUom,
       lifterWeightValue: lifterWeightValueController.text,
     );
   }
@@ -275,26 +275,6 @@ class TankInfoPageState extends State<TankInfoPage> {
                     ],
 
                     if (posts != null) ...[
-                      dropdownModel<SafetyValve>(
-                        title: "Safety Valve",
-                        value: safetyValveMaster,
-                        items: posts!.safetyValveBrands ?? [],
-                        label: (e) => e.brandName ?? "",
-                        onChange: (v) => setState(() => safetyValveMaster = v),
-                      ),
-                    ],
-
-                    if (posts != null) ...[
-                      dropdownModel<Product>(
-                        title: "Product",
-                        value: productMaster,
-                        items: posts!.products ?? [],
-                        label: (e) => e.productName ?? "",
-                        onChange: (v) => setState(() => productMaster = v),
-                      ),
-                    ],
-
-                    if (posts != null) ...[
                       dropdownModel<Location>(
                         title: "Location",
                         value: locationMaster,
@@ -305,23 +285,19 @@ class TankInfoPageState extends State<TankInfoPage> {
                     ],
 
                     // Extra free-text fields
-                    fieldText("Vacuum Reading", vacuumReadingController),
-                    fieldText("Lifter Weight", lifterWeightValueController),
-
-                    imageFieldBox(
-                      label: lifterWeightController.text.isEmpty
-                          ? "Lifter Weight Image"
-                          : lifterWeightController.text,
-                      controller: lifterWeightController,
-                      photo: lifterPhoto,
-                      networkUrl: lifterWeightImageURL,
-                      onPick: pickLifterPhoto,
-                      onPreview: () => previewImage(
-                        file: lifterPhoto,
-                        networkUrl: lifterWeightImageURL,
-                        title: "Lifter Weight",
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: fieldText("Vacuum Reading", vacuumReadingController),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _uomDropdown(),
+                        ),
+                      ],
                     ),
+                    fieldText("Lifter Weight", lifterWeightValueController),
                   ],
                 ),
               ),
@@ -351,9 +327,8 @@ class TankInfoPageState extends State<TankInfoPage> {
       // Clear dropdown selections (user must choose fresh values)
       statusMaster = null;
       inspectionMaster = null;
-      productMaster = null;
       locationMaster = null;
-      safetyValveMaster = null;
+      selectedVacuumUom = "Micron";
     });
   }
 
@@ -361,14 +336,34 @@ class TankInfoPageState extends State<TankInfoPage> {
 
   Widget fieldText(String title, TextEditingController controller) {
     return Container(
-      width: double.infinity,
-      margin: EdgeInsets.only(left: 18, right: 18),
+      margin: const EdgeInsets.symmetric(horizontal: 15),
       child: TextFormField(
         controller: controller,
         decoration: InputDecoration(
           labelText: title,
           border: const OutlineInputBorder(),
         ),
+      ),
+    );
+  }
+
+  Widget _uomDropdown() {
+    return Container(
+      margin: const EdgeInsets.only(right: 15),
+      child: DropdownButtonFormField<String>(
+        initialValue: selectedVacuumUom,
+        decoration: const InputDecoration(
+          labelText: "UOM",
+          border: OutlineInputBorder(),
+        ),
+        items: const [
+          DropdownMenuItem(value: "Micron", child: Text("Micron")),
+          DropdownMenuItem(value: "TORR", child: Text("TORR")),
+        ],
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() => selectedVacuumUom = value);
+        },
       ),
     );
   }
@@ -632,9 +627,7 @@ class TankInfoPageState extends State<TankInfoPage> {
     // Normalize IDs (backend may return int or string)
     final statusId = _asInt(data.statusId);
     final inspectionTypeId = _asInt(data.inspectionTypeId);
-    final productId = _asInt(data.productId);
     final locationId = _asInt(data.locationId);
-    final svBrandId = _asInt(data.safetyValveBrandId);
 
     // Date
     dateController.text =
@@ -663,14 +656,6 @@ class TankInfoPageState extends State<TankInfoPage> {
         (e) => e.inspectionTypeId == inspectionTypeId,
       );
 
-      safetyValveMaster = posts?.safetyValveBrands?.firstWhereOrNull(
-        (e) => e.id == svBrandId,
-      );
-
-      productMaster = posts?.products?.firstWhereOrNull(
-        (e) => e.productId == productId,
-      );
-
       locationMaster = posts?.locations?.firstWhereOrNull(
         (e) => e.locationId == locationId,
       );
@@ -681,6 +666,9 @@ class TankInfoPageState extends State<TankInfoPage> {
 
     // Vacuum reading and lifter weight value (with null-safe defaults)
     vacuumReadingController.text = data.vacuumReading ?? "";
+    selectedVacuumUom = (data.vacuumReadingUom ?? "").toUpperCase() == "TORR"
+        ? "TORR"
+        : "Micron";
     lifterWeightValueController.text = data.lifterWeightValue ?? "";
   }
 }

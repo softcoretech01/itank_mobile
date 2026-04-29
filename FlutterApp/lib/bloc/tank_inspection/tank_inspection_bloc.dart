@@ -254,10 +254,9 @@ class TankInspectionBloc extends Bloc<TankInspectionEvent, TankInspectionState> 
         "notes": e.tankInfoData.reportNumber,
         "status_id": e.tankInfoData.tankStatus,
         "inspection_type_id": e.tankInfoData.inspectionType,
-        "product_id": e.tankInfoData.product,
         "location_id": e.tankInfoData.location,
-        "safety_valve_brand_id": e.tankInfoData.safetyValve,
         "vacuum_reading": e.tankInfoData.vacuumReading,
+        "vacuum_reading_uom": e.tankInfoData.vacuumReadingUom,
         "lifter_weight_value": e.tankInfoData.lifterWeightValue,
       };
 

@@ -14,8 +14,13 @@ import '../../../utils/image_picker_helper.dart';
 
 class UploadPhotosPage extends StatefulWidget {
   final Function(FormData, int) onPhotosSelected;
+  final Function(Set<String>)? onDentViewsChanged;
 
-  const UploadPhotosPage({super.key, required this.onPhotosSelected});
+  const UploadPhotosPage({
+    super.key,
+    required this.onPhotosSelected,
+    this.onDentViewsChanged,
+  });
 
   @override
   State<UploadPhotosPage> createState() => UploadPhotosPageState();
@@ -32,6 +37,7 @@ class UploadPhotosPageState extends State<UploadPhotosPage> {
   bool isLoading = true;
   bool loaded = false;
   bool isUndersideImageOne = false;
+  final Set<String> _dentMarkedViews = {};
 
   @override
   void initState() {
@@ -192,9 +198,12 @@ class UploadPhotosPageState extends State<UploadPhotosPage> {
 
                 return PhotoTile(
                   label: t.imageType,
+                  imageTypeId: t.imageTypeId,
                   networkImages: netImgs,
                   localImages: locImgs,
                   maxCount: t.count,
+                  dentMarkedViews: _dentMarkedViews,
+                  onToggleDent: _onToggleDent,
                   onAddPhoto: () => pickPhoto(t),
                   onRemoveLocalPhoto: (i) => removeLocalPhoto(t, i),
                   onRemoveNetworkPhoto: (imageId) {
@@ -230,6 +239,31 @@ class UploadPhotosPageState extends State<UploadPhotosPage> {
     ));
   }
 
+  bool _isDentMarkSupportedType(int imageTypeId) {
+    return imageTypeId == 1 || imageTypeId == 2;
+  }
+
+  String _viewNameForImageType(int imageTypeId) {
+    if (imageTypeId == 1) return "Front view";
+    if (imageTypeId == 2) return "Rear view";
+    return "";
+  }
+
+  void _onToggleDent(int imageTypeId) {
+    if (!_isDentMarkSupportedType(imageTypeId)) return;
+    final viewName = _viewNameForImageType(imageTypeId);
+    if (viewName.isEmpty) return;
+
+    setState(() {
+      if (_dentMarkedViews.contains(viewName)) {
+        _dentMarkedViews.remove(viewName);
+      } else {
+        _dentMarkedViews.add(viewName);
+      }
+    });
+    widget.onDentViewsChanged?.call(Set<String>.from(_dentMarkedViews));
+  }
+
 }
 Map<int, List<UploadedImage>> groupImagesByType(UploadedImagesData data) {
   final Map<int, List<UploadedImage>> result = {};
@@ -250,9 +284,12 @@ Map<int, List<UploadedImage>> groupImagesByType(UploadedImagesData data) {
 
 class PhotoTile extends StatelessWidget {
   final String label;
+  final int imageTypeId;
   final List<UploadedImage> networkImages;
   final List<File> localImages;
   final int maxCount;
+  final Set<String> dentMarkedViews;
+  final Function(int) onToggleDent;
 
   final VoidCallback onAddPhoto;
   final Function(int) onRemoveLocalPhoto;
@@ -262,9 +299,12 @@ class PhotoTile extends StatelessWidget {
   const PhotoTile({
     super.key,
     required this.label,
+    required this.imageTypeId,
     required this.networkImages,
     required this.localImages,
     required this.maxCount,
+    required this.dentMarkedViews,
+    required this.onToggleDent,
     required this.onAddPhoto,
     required this.onRemoveLocalPhoto,
     required this.onRemoveNetworkPhoto,
@@ -275,6 +315,9 @@ class PhotoTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalCount = networkImages.length + localImages.length;
     final showAddButton = totalCount < maxCount;
+    final isDentType = imageTypeId == 1 || imageTypeId == 2;
+    final dentViewName = imageTypeId == 1 ? "Front view" : "Rear view";
+    final isDentMarked = isDentType && dentMarkedViews.contains(dentViewName);
 
     final List<_TileItem> items = [
       ...networkImages.map((e) => _TileItem(url: e.imagePath, uploadedImage: e)),
@@ -294,6 +337,16 @@ class PhotoTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            if (isDentType)
+              TextButton.icon(
+                onPressed: totalCount == 0 ? null : () => onToggleDent(imageTypeId),
+                icon: Icon(
+                  Icons.circle,
+                  size: 12,
+                  color: isDentMarked ? Colors.red : Colors.grey,
+                ),
+                label: Text(isDentMarked ? "Dent marked" : "Mark as dent"),
+              ),
             const SizedBox(height: 10),
 
             GridView.builder(

@@ -42,6 +42,7 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
   double uploadProgress = 0;
   bool isUploading = false;
   int photoCount = 0;
+  Set<String> dentMarkedViews = {};
   // Here we store selected images from UploadPhotosPage
   FormData selectedPhotos = FormData();
   int? inspectionId;
@@ -51,6 +52,12 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
   void onPhotosSelected(FormData formData, int count) {
     selectedPhotos = formData; // store ready data
     photoCount = count;
+  }
+
+  void onDentViewsChanged(Set<String> views) {
+    setState(() {
+      dentMarkedViews = views;
+    });
   }
 
 
@@ -499,6 +506,7 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
                           return UploadPhotosPage(
                             key: uploadPhotosKey,
                             onPhotosSelected: onPhotosSelected,
+                            onDentViewsChanged: onDentViewsChanged,
                           );
                         case 2:
                           return checklistPage();
@@ -610,13 +618,18 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
 
   /// ------------------- PAGE 2: UPLOAD PHOTOS -------------------
   Widget uploadPhotosPage() {
-    return UploadPhotosPage(key: uploadPhotosKey,onPhotosSelected: onPhotosSelected,);
+    return UploadPhotosPage(
+      key: uploadPhotosKey,
+      onPhotosSelected: onPhotosSelected,
+      onDentViewsChanged: onDentViewsChanged,
+    );
   }
 
 
   Widget checklistPage() {
     return ChecklistPage(
       key: checklistKey,
+      availableDentViews: dentMarkedViews,
     );
   }
 
@@ -740,7 +753,7 @@ class _TankInspectionFlowState extends State<TankInspectionFlow> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Action Required", style: TextStyle(color: Colors.red)),
+        title: const Text("Action Required", style: TextStyle(color: Color.fromRGBO(244, 67, 54, 1))),
         content: Text(message),
         actions: [
           TextButton(

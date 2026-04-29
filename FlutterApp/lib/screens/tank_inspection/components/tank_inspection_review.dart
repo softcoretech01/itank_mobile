@@ -173,12 +173,10 @@ class TankInspectionReview extends StatelessWidget {
       "Manufacturer": data?.mfgr,
       "Ownership": data?.ownership,
       "Next Inspection Date": data?.piNextInspectionDate,
-      "Vacuum Reading": data?.vacuumReading,
+      "Vacuum Reading": "${data?.vacuumReading ?? "-"} ${data?.vacuumReadingUom ?? ""}".trim(),
       "Lifter Weight": data?.lifterWeightValue,
       "Status": data?.status,
       "Inspection Type": data?.inspectionType,
-      "Safety Valve": data?.safetyValveBrand,
-      "Product": data?.product,
       "Location": data?.location,
     };
 

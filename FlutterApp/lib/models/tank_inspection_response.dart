@@ -97,6 +97,7 @@ class Inspection {
   final String updatedBy;
 
   final String? vacuumReading;
+  final String? vacuumReadingUom;
   final String? lifterWeightValue;
 
   // Additional display fields
@@ -139,6 +140,7 @@ class Inspection {
     required this.safetyValveBrand,
     required this.product,
     required this.vacuumReading,
+    required this.vacuumReadingUom,
     required this.lifterWeightValue,
   });
 
@@ -184,6 +186,7 @@ class Inspection {
     safetyValveBrand: json["safety_valve_brand"]?.toString(),
     product: json["product_name"]?.toString() ?? "",
     vacuumReading: json["vacuum_reading"]?.toString(),
+    vacuumReadingUom: json["vacuum_reading_uom"]?.toString(),
     lifterWeightValue: json["lifter_weight_value"]?.toString(),
   );
 
@@ -220,6 +223,7 @@ class Inspection {
     "safety_valve_brand": safetyValveBrand,
     "product": product,
     "vacuum_reading": vacuumReading,
+    "vacuum_reading_uom": vacuumReadingUom,
     "lifter_weight_value": lifterWeightValue,
   };
 }

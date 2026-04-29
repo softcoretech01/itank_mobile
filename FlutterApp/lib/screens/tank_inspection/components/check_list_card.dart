@@ -10,7 +10,11 @@ import '../../../models/status_master_response.dart';
 import '../../../repository/master_data.dart';
 
 class ChecklistPage extends StatefulWidget {
-  const ChecklistPage({super.key});
+  final Set<String> availableDentViews;
+  const ChecklistPage({
+    super.key,
+    this.availableDentViews = const {},
+  });
 
   @override
   State<ChecklistPage> createState() => ChecklistPageState();
@@ -24,6 +28,7 @@ class ChecklistPageState extends State<ChecklistPage> {
   Map<String, String?> itemClicked = {};
   Map<String, bool> buttonDisabled = {};
   Map<String, Timer?> buttonTimers = {};
+  final Map<String, Set<String>> selectedImageViews = {};
 
   List<Section> sections = [];
 
@@ -93,7 +98,9 @@ class ChecklistPageState extends State<ChecklistPage> {
                 itemStatus[savedItem.subJobId] = savedItem.statusId;
                 showCommentBox[savedItem.subJobId] =
                     savedItem.statusId == faultyId;
-                comments[savedItem.subJobId]!.text = savedItem.comment;
+                final parsedComment = _parseComment(savedItem.comment);
+                comments[savedItem.subJobId]!.text = parsedComment.$1;
+                selectedImageViews[savedItem.subJobId] = parsedComment.$2;
 
               }
             }
@@ -180,7 +187,10 @@ class ChecklistPageState extends State<ChecklistPage> {
                   itemStatus[subJobId] = ns;
 
                   showCommentBox[subJobId] = ns == faulty;
-                  if (ns != faulty) comments[subJobId]?.clear();
+                  if (ns != faulty) {
+                    comments[subJobId]?.clear();
+                    selectedImageViews[subJobId] = {};
+                  }
 
                   buttonDisabled[subJobId] = true;
                   buttonTimers[subJobId]?.cancel();
@@ -260,12 +270,39 @@ class ChecklistPageState extends State<ChecklistPage> {
                   if (showCommentBox[id] == true)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: TextField(
-                        controller: comments[id],
-                        decoration: const InputDecoration(
-                          hintText: "Enter comment",
-                          border: OutlineInputBorder(),
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextField(
+                            controller: comments[id],
+                            decoration: const InputDecoration(
+                              hintText: "Enter comment",
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          if (widget.availableDentViews.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            const Text(
+                              "Allocate dent image:",
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 4,
+                              children: _buildImageAllocationOptions(id),
+                            ),
+                          ]
+                        ],
+                      ),
+                    ),
+                  if (showCommentBox[id] == true &&
+                      widget.availableDentViews.isNotEmpty &&
+                      _buildImageAllocationOptions(id).isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        "Front/Rear dent views are already allotted.",
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                     ),
                   const SizedBox(height: 8),
@@ -310,7 +347,10 @@ class ChecklistPageState extends State<ChecklistPage> {
               subJobId: int.tryParse(i.subJobId) ?? 1,
               statusId:
                   int.tryParse(itemStatus[i.subJobId] ?? '1') ?? 1,
-              comments: (comments[i.subJobId]?.text ?? '').trim(),
+              comments: _composeComment(
+                comments[i.subJobId]?.text ?? '',
+                selectedImageViews[i.subJobId] ?? {},
+              ),
 
             );
           }).toList(),
@@ -319,5 +359,65 @@ class ChecklistPageState extends State<ChecklistPage> {
     }
 
     return result;
+  }
+
+  Set<String> _allocatedViewsExcluding(String currentSubJobId) {
+    final allocated = <String>{};
+    selectedImageViews.forEach((subJobId, views) {
+      if (subJobId != currentSubJobId) {
+        allocated.addAll(views);
+      }
+    });
+    return allocated;
+  }
+
+  List<Widget> _buildImageAllocationOptions(String subJobId) {
+    final selectedForCurrent = selectedImageViews[subJobId] ?? <String>{};
+    final blocked = _allocatedViewsExcluding(subJobId);
+    final options = widget.availableDentViews
+        .where((view) => !blocked.contains(view) || selectedForCurrent.contains(view))
+        .toList();
+
+    return options
+        .map(
+          (view) => FilterChip(
+            label: Text(view),
+            selected: selectedForCurrent.contains(view),
+            onSelected: (isSelected) {
+              setState(() {
+                final mutable = Set<String>.from(selectedForCurrent);
+                if (isSelected) {
+                  mutable.add(view);
+                } else {
+                  mutable.remove(view);
+                }
+                selectedImageViews[subJobId] = mutable;
+              });
+            },
+          ),
+        )
+        .toList();
+  }
+
+  (String, Set<String>) _parseComment(String comment) {
+    final regex = RegExp(r'\s*\[Images:\s*(.*?)\]\s*$');
+    final match = regex.firstMatch(comment);
+    if (match == null) return (comment.trim(), <String>{});
+
+    final viewsRaw = match.group(1) ?? '';
+    final views = viewsRaw
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+    final baseComment = comment.replaceFirst(regex, '').trim();
+    return (baseComment, views);
+  }
+
+  String _composeComment(String comment, Set<String> views) {
+    final baseComment = comment.trim();
+    if (views.isEmpty) return baseComment;
+    final sortedViews = views.toList()..sort();
+    return "$baseComment [Images: ${sortedViews.join(', ')}]".trim();
   }
 }

@@ -76,6 +76,7 @@ class TankData {
 
   // New fields for vacuum reading and lifter weight value
   final String? vacuumReading;
+  final String? vacuumReadingUom;
   final String? lifterWeightValue;
 
   TankData({
@@ -104,6 +105,7 @@ class TankData {
     this.operatorId,
     this.empId,
     this.vacuumReading,
+    this.vacuumReadingUom,
     this.lifterWeightValue,
   });
 
@@ -134,6 +136,7 @@ class TankData {
       operatorId: json['operator_id'],
       empId: json['emp_id'],
       vacuumReading: json['vacuum_reading']?.toString(),
+      vacuumReadingUom: json['vacuum_reading_uom']?.toString(),
       lifterWeightValue: json['lifter_weight_value']?.toString(),
     );
   }
@@ -165,6 +168,7 @@ class TankData {
       "operator_id": operatorId,
       "emp_id": empId,
       "vacuum_reading": vacuumReading,
+      "vacuum_reading_uom": vacuumReadingUom,
       "lifter_weight_value": lifterWeightValue,
     };
   }
@@ -195,6 +199,7 @@ class TankData {
     int? operatorId,
     int? empId,
     String? vacuumReading,
+    String? vacuumReadingUom,
     String? lifterWeightValue,
   }) {
     return TankData(
@@ -224,6 +229,7 @@ class TankData {
       operatorId: operatorId ?? this.operatorId,
       empId: empId ?? this.empId,
       vacuumReading: vacuumReading ?? this.vacuumReading,
+      vacuumReadingUom: vacuumReadingUom ?? this.vacuumReadingUom,
       lifterWeightValue: lifterWeightValue ?? this.lifterWeightValue,
     );
   }

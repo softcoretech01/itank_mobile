@@ -1,14 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy import text
+from typing import List, Optional, Any
 from pydantic import BaseModel
 from datetime import datetime
+import logging
+import traceback
 
 from app.database import get_db
-from app.models.regulations_master import RegulationsMaster
-from app.routers.tank_inspection_router import get_current_user, success_resp, error_resp
+# Import ONLY the auth helper to avoid circularity with response helpers
+from app.routers.tank_inspection_router import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class RegulationCreate(BaseModel):
     regulation_name: str
@@ -17,23 +23,39 @@ class RegulationUpdate(BaseModel):
     regulation_name: Optional[str] = None
     status: Optional[int] = None
 
+# Mock/local helpers to avoid circular imports if any
+def local_success(message: str, data: Any = None, status_code: int = 200):
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": True, "message": message, "data": jsonable_encoder(data) if data is not None else {}}
+    )
+
+def local_error(message: str, status_code: int = 400):
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": False, "message": message, "data": {}}
+    )
+
 @router.get("/")
 def get_all_regulations(db: Session = Depends(get_db)):
     try:
-        results = db.query(RegulationsMaster).order_by(RegulationsMaster.id.desc()).all()
-        return success_resp("All regulations fetched", results)
+        results = db.execute(text("CALL sp_GetAllRegulations()")).mappings().fetchall()
+        data = [dict(r) for r in results]
+        return local_success("All regulations fetched", data)
     except Exception as e:
-        return error_resp(f"Error fetching regulations: {str(e)}", 500)
+        logger.error(f"Error in get_all_regulations: {e}")
+        logger.error(traceback.format_exc())
+        return local_error(f"Error fetching regulations: {str(e)}", 500)
 
 @router.get("/{id}")
 def get_regulation_by_id(id: int, db: Session = Depends(get_db)):
     try:
-        result = db.query(RegulationsMaster).filter(RegulationsMaster.id == id).first()
+        result = db.execute(text("CALL sp_GetRegulationById(:id)"), {"id": id}).mappings().first()
         if not result:
-            return error_resp("Regulation not found", 404)
-        return success_resp("Regulation fetched successfully", result)
+            return local_error("Regulation not found", 404)
+        return local_success("Regulation fetched successfully", dict(result))
     except Exception as e:
-        return error_resp(f"Error fetching regulation: {str(e)}", 500)
+        return local_error(f"Error fetching regulation: {str(e)}", 500)
 
 @router.post("/")
 def create_regulation(
@@ -42,29 +64,23 @@ def create_regulation(
     current_user = Depends(get_current_user)
 ):
     try:
-        # Check if exists
-        existing = db.query(RegulationsMaster).filter(RegulationsMaster.regulation_name == data.regulation_name).first()
-        if existing:
-            return error_resp(f"Regulation '{data.regulation_name}' already exists", 400)
-
-        # Resolve emp_id from current_user
         emp_id = None
         if hasattr(current_user, "emp_id"):
             emp_id = int(current_user.emp_id)
 
-        new_reg = RegulationsMaster(
-            regulation_name=data.regulation_name,
-            status=1,
-            created_by=emp_id,
-            updated_by=emp_id
-        )
-        db.add(new_reg)
+        result = db.execute(
+            text("CALL sp_CreateRegulation(:name, :emp_id)"), 
+            {"name": data.regulation_name, "emp_id": emp_id}
+        ).mappings().first()
+        
         db.commit()
-        db.refresh(new_reg)
-        return success_resp("Regulation created successfully", new_reg, 201)
+        return local_success("Regulation created successfully", dict(result) if result else {}, 201)
     except Exception as e:
         db.rollback()
-        return error_resp(f"Error creating regulation: {str(e)}", 500)
+        error_msg = str(e)
+        if "already exists" in error_msg:
+            return local_error(error_msg, 400)
+        return local_error(f"Error creating regulation: {error_msg}", 500)
 
 @router.put("/{id}")
 def update_regulation(
@@ -74,31 +90,28 @@ def update_regulation(
     current_user = Depends(get_current_user)
 ):
     try:
-        reg = db.query(RegulationsMaster).filter(RegulationsMaster.id == id).first()
-        if not reg:
-            return error_resp("Regulation not found", 404)
-
-        if data.regulation_name is not None:
-            # Check unique
-            if data.regulation_name != reg.regulation_name:
-                existing = db.query(RegulationsMaster).filter(RegulationsMaster.regulation_name == data.regulation_name).first()
-                if existing:
-                    return error_resp(f"Regulation '{data.regulation_name}' already exists", 400)
-            reg.regulation_name = data.regulation_name
-
-        if data.status is not None:
-            reg.status = data.status
-
-        # Resolve emp_id from current_user
         emp_id = None
         if hasattr(current_user, "emp_id"):
             emp_id = int(current_user.emp_id)
         
-        reg.updated_by = emp_id
+        result = db.execute(
+            text("CALL sp_UpdateRegulation(:id, :name, :status, :emp_id)"),
+            {
+                "id": id,
+                "name": data.regulation_name,
+                "status": data.status,
+                "emp_id": emp_id
+            }
+        ).mappings().first()
+
+        if not result:
+             return local_error("Regulation not found", 404)
 
         db.commit()
-        db.refresh(reg)
-        return success_resp("Regulation updated successfully", reg)
+        return local_success("Regulation updated successfully", dict(result))
     except Exception as e:
         db.rollback()
-        return error_resp(f"Error updating regulation: {str(e)}", 500)
+        error_msg = str(e)
+        if "already exists" in error_msg:
+            return local_error(error_msg, 400)
+        return local_error(f"Error updating regulation: {error_msg}", 500)

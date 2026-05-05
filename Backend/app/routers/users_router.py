@@ -64,11 +64,7 @@ def get_all_users():
         connection = get_db_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT id, emp_id, name, email, department, designation, hod, supervisor, created_at, updated_at
-                    FROM users
-                    ORDER BY emp_id
-                """)
+                cursor.execute("CALL sp_GetAllUsers()")
                 users = cursor.fetchall()
         finally:
             connection.close()
@@ -87,11 +83,7 @@ def export_users_to_excel():
         connection = get_db_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT id, emp_id, name, email, department, designation, hod, supervisor, created_at, updated_at
-                    FROM users
-                    ORDER BY emp_id
-                """)
+                cursor.execute("CALL sp_GetAllUsers()")
                 users = cursor.fetchall()
         finally:
             connection.close()
@@ -161,11 +153,7 @@ def get_user_by_emp_id(emp_id: int):
         connection = get_db_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT id, emp_id, name, email, department, designation, hod, supervisor, created_at, updated_at
-                    FROM users
-                    WHERE emp_id = %s
-                """, (emp_id,))
+                cursor.execute("CALL sp_GetUserByEmpId(%s)", (emp_id,))
                 user = cursor.fetchone()
         finally:
             connection.close()
@@ -187,58 +175,25 @@ def update_user(emp_id: int, user_data: UserUpdate):
         connection = get_db_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT id FROM users WHERE emp_id = %s", (emp_id,))
+                cursor.execute("CALL sp_GetUserByEmpId(%s)", (emp_id,))
                 existing_user = cursor.fetchone()
-        finally:
-            connection.close()
+                
+                if not existing_user:
+                    raise HTTPException(status_code=404, detail="User not found")
 
-        if not existing_user:
-            raise HTTPException(status_code=404, detail="User not found")
+                # Prepare values for update (using existing values if new ones are None)
+                name = user_data.name if user_data.name is not None else existing_user.get('name')
+                email = user_data.email if user_data.email is not None else existing_user.get('email')
+                dept = user_data.department if user_data.department is not None else existing_user.get('department')
+                desig = user_data.designation if user_data.designation is not None else existing_user.get('designation')
+                hod = user_data.hod if user_data.hod is not None else existing_user.get('hod')
+                sup = user_data.supervisor if user_data.supervisor is not None else existing_user.get('supervisor')
 
-        # Build update query dynamically
-        update_fields = []
-        update_values = []
-
-        if user_data.name is not None:
-            update_fields.append("name = %s")
-            update_values.append(user_data.name)
-        if user_data.email is not None:
-            update_fields.append("email = %s")
-            update_values.append(user_data.email)
-        if user_data.department is not None:
-            update_fields.append("department = %s")
-            update_values.append(user_data.department)
-        if user_data.designation is not None:
-            update_fields.append("designation = %s")
-            update_values.append(user_data.designation)
-        if user_data.hod is not None:
-            update_fields.append("hod = %s")
-            update_values.append(user_data.hod)
-        if user_data.supervisor is not None:
-            update_fields.append("supervisor = %s")
-            update_values.append(user_data.supervisor)
-
-        if not update_fields:
-            raise HTTPException(status_code=400, detail="No fields to update")
-
-        # Always update updated_at
-        update_fields.append("updated_at = CURRENT_TIMESTAMP")
-        update_values.append(emp_id)
-
-        # Execute update
-        connection = get_db_connection()
-        try:
-            with connection.cursor() as cursor:
-                sql = f"UPDATE users SET {', '.join(update_fields)} WHERE emp_id = %s"
-                cursor.execute(sql, update_values)
+                cursor.execute(
+                    "CALL sp_UpdateUser(%s, %s, %s, %s, %s, %s, %s)",
+                    (emp_id, name, email, dept, desig, hod, sup)
+                )
                 connection.commit()
-
-                # Fetch updated user
-                cursor.execute("""
-                    SELECT id, emp_id, name, email, department, designation, hod, supervisor, created_at, updated_at
-                    FROM users
-                    WHERE emp_id = %s
-                """, (emp_id,))
                 updated_user = cursor.fetchone()
         finally:
             connection.close()
@@ -257,23 +212,14 @@ def delete_user(emp_id: int):
         connection = get_db_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT id, name FROM users WHERE emp_id = %s", (emp_id,))
+                cursor.execute("CALL sp_GetUserByEmpId(%s)", (emp_id,))
                 user = cursor.fetchone()
-        finally:
-            connection.close()
+                
+                if not user:
+                    raise HTTPException(status_code=404, detail="User not found")
 
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        # Delete user
-        connection = get_db_connection()
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("DELETE FROM users WHERE emp_id = %s", (emp_id,))
+                cursor.execute("CALL sp_DeleteUser(%s)", (emp_id,))
                 connection.commit()
-
-                if cursor.rowcount == 0:
-                    raise HTTPException(status_code=400, detail="Failed to delete user")
         finally:
             connection.close()
 
@@ -286,8 +232,6 @@ def delete_user(emp_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Optional: endpoint to create user via this router (keeps hashing consistent).
-# Remove if you don't want this route.
 @router.post("/create")
 def create_user(payload: UserCreate):
     try:
@@ -299,16 +243,11 @@ def create_user(payload: UserCreate):
                     raise HTTPException(status_code=409, detail="User already exists")
 
                 pwd_hash, salt = hash_password(payload.password)
-                cursor.execute("""
-                    INSERT INTO users (emp_id, name, email, department, designation, hod, supervisor, password_hash, password_salt)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (payload.emp_id, payload.name, payload.email, payload.department, payload.designation, payload.hod, payload.supervisor, pwd_hash, salt))
+                cursor.execute(
+                    "CALL sp_CreateUser(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (payload.emp_id, payload.name, payload.email, payload.department, payload.designation, payload.hod, payload.supervisor, pwd_hash, salt)
+                )
                 connection.commit()
-                user_id = cursor.lastrowid
-                cursor.execute("""
-                    SELECT id, emp_id, name, email, department, designation, hod, supervisor, created_at, updated_at
-                    FROM users WHERE id = %s
-                """, (user_id,))
                 user = cursor.fetchone()
         finally:
             connection.close()

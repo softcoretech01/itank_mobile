@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.inspection_valve_model import InspectionValve
 from typing import List, Optional
@@ -55,16 +56,16 @@ STATUS_MAP = {
 
 @router.get("/tank/{tank_id}")
 def get_valves(tank_id: int, db: Session = Depends(get_db)):
-    valves = db.query(InspectionValve).filter(InspectionValve.tank_id == tank_id).all()
+    results = db.execute(text("CALL sp_GetInspectionValvesByTank(:tank_id)"), {"tank_id": tank_id}).mappings().fetchall()
     return {
         "tank_id": tank_id,
         "valves": [
             {
-                "id": v.id,
-                "feature": v.features,
-                "status_id": v.status_id,
+                "id": v["id"],
+                "feature": v["features"],
+                "status_id": v["status_id"],
             }
-            for v in valves
+            for v in results
         ]
     }
 
@@ -79,19 +80,20 @@ def create_valves(
     
     for item in data.valves:
         status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
-        new_valve = InspectionValve(
-            tank_id=data.tank_id,
-            features=item.feature,
-            status_id=item.status_id,
-            status=status_str,
-            created_by=user_id,
-            modified_by=user_id
-        )
-        db.add(new_valve)
-        db.flush() # Populate ID for response
+        result = db.execute(
+            text("CALL sp_UpsertInspectionValve(:id, :tank_id, :feature, :status_id, :status, :eid)"),
+            {
+                "id": None,
+                "tank_id": data.tank_id,
+                "feature": item.feature,
+                "status_id": item.status_id,
+                "status": status_str,
+                "eid": user_id
+            }
+        ).mappings().first()
         
         resp_item = item.dict()
-        resp_item['id'] = new_valve.id
+        resp_item['id'] = result['id']
         resp_item['status'] = status_str
         response_valves.append(resp_item)
     
@@ -109,42 +111,36 @@ def update_valves(
     authorization: Optional[str] = Header(None)
 ):
     user_id = get_user_id(authorization)
-    existing = db.query(InspectionValve).filter(InspectionValve.tank_id == data.tank_id).all()
-    # Map by ID if available, otherwise names
-    existing_id_map = {v.id: v for v in existing if v.id is not None}
-    existing_name_map = {v.features: v for v in existing}
+    existing_results = db.execute(text("CALL sp_GetInspectionValvesByTank(:tank_id)"), {"tank_id": data.tank_id}).mappings().fetchall()
+    
+    existing_id_map = {v["id"]: v for v in existing_results if v["id"] is not None}
+    existing_name_map = {v["features"]: v for v in existing_results}
     
     response_valves = []
     
     for item in data.valves:
         status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
-        record = None
+        record_id = None
 
         if item.id and item.id in existing_id_map:
-            record = existing_id_map[item.id]
+            record_id = item.id
         elif item.feature in existing_name_map:
-            record = existing_name_map[item.feature]
+            record_id = existing_name_map[item.feature]["id"]
 
-        if record:
-            # Update both status and name (edited feature)
-            record.features = item.feature
-            record.status_id = item.status_id
-            record.status = status_str
-            record.modified_by = user_id
-        else:
-            record = InspectionValve(
-                tank_id=data.tank_id,
-                features=item.feature,
-                status_id=item.status_id,
-                status=status_str,
-                created_by=user_id,
-                modified_by=user_id
-            )
-            db.add(record)
+        result = db.execute(
+            text("CALL sp_UpsertInspectionValve(:id, :tank_id, :feature, :status_id, :status, :eid)"),
+            {
+                "id": record_id,
+                "tank_id": data.tank_id,
+                "feature": item.feature,
+                "status_id": item.status_id,
+                "status": status_str,
+                "eid": user_id
+            }
+        ).mappings().first()
             
-        db.flush() # Ensure record.id is populated
         resp_item = item.dict()
-        resp_item['id'] = record.id
+        resp_item['id'] = result['id']
         resp_item['status'] = status_str
         response_valves.append(resp_item)
 

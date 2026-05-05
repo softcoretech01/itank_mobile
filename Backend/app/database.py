@@ -311,6 +311,8 @@ def init_db():
         "ownership_master_model",
         "master_valve_model",
         "master_gauge_model",
+        "tank_drawings",
+        "tank_frame_outer_model",
     ]
 
     for mod in model_modules:
@@ -376,8 +378,7 @@ def init_db():
                         `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         `created_by` VARCHAR(100),
-                        `updated_by` VARCHAR(100),
-                        UNIQUE KEY `uq_tank_header_tank_number` (`tank_number`)
+                        `updated_by` VARCHAR(100)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """))
                 logger.info("Created tank_header table (manual fallback).")
@@ -399,7 +400,7 @@ def init_db():
                         `mawp` VARCHAR(50),
                         `design_temperature` VARCHAR(50),
                         `tare_weight_kg` FLOAT,
-                        `product_id` INT,
+                        `product_id` TEXT,
  `safety_valve_brand_id` INT,
                         `mgw_kg` FLOAT,
                         `mpl_kg` FLOAT,
@@ -417,9 +418,7 @@ def init_db():
                         `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY `uq_tank_details_tank_id` (`tank_id`),
-                        UNIQUE KEY `uq_tank_details_tank_number` (`tank_number`),
-                        CONSTRAINT fk_tank_id FOREIGN KEY (`tank_id`) REFERENCES tank_header(`id`) ON DELETE SET NULL,
-                        CONSTRAINT fk_tank_number FOREIGN KEY (`tank_number`) REFERENCES tank_header(`tank_number`) ON DELETE SET NULL
+                        CONSTRAINT fk_tank_id FOREIGN KEY (`tank_id`) REFERENCES tank_header(`id`) ON DELETE SET NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """))
                 logger.info("Created/updated tank_details table schema.")
@@ -452,6 +451,7 @@ def init_db():
                         `frame_type` VARCHAR(255),
                         `cabinet_type` VARCHAR(255),
                         `mfgr` VARCHAR(255),
+                        `safety_valve_brand_id` INT,
                         `safety_valve_model_id` INT,
                         `safety_valve_size_id` INT,
                         `pi_next_inspection_date` VARCHAR(7),
@@ -585,6 +585,30 @@ def init_db():
                 except Exception as e:
                     logger.warning(f"Failed to migrate {table_name}: {e}")
 
+            # Migration: Add un_code_id column to product_master if missing
+            try:
+                cursor.execute(f"SELECT COUNT(*) as cnt FROM information_schema.columns WHERE table_schema=%s AND table_name='product_master' AND column_name='un_code_id'", (DB_NAME,))
+                res = cursor.fetchone()
+                if res and res.get('cnt', 0) == 0:
+                    cursor.execute(f"ALTER TABLE `product_master` ADD COLUMN `un_code_id` INT NULL")
+                    conn2.commit()
+                    logger.info("Added un_code_id column to product_master")
+                    
+                    # Update existing data with the mapping
+                    mapping = [
+                        ('Liquid Argon', 3),
+                        ('Liquid Carbon Dioxide', 8),
+                        ('Liquid Oxygen', 1),
+                        ('Liquid Nitrogen', 2),
+                        ('Ethylene', 6),
+                        ('Nitrous Oxide', 7),
+                    ]
+                    for name, un_id in mapping:
+                        cursor.execute("UPDATE product_master SET un_code_id=%s WHERE product_name=%s", (un_id, name))
+                    conn2.commit()
+            except Exception as e:
+                logger.warning(f"Failed to migrate product_master: {e}")
+
             # ---------- CREATE: inspection_job ----------
             try:
                 cursor.execute("""
@@ -672,6 +696,7 @@ def init_db():
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         product_name VARCHAR(150) NOT NULL,
                         description TEXT,
+                        un_code_id INT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     ) ENGINE=InnoDB;
                 """)
@@ -679,16 +704,20 @@ def init_db():
                 cnt = cursor.fetchone().get('cnt', 0)
                 if cnt == 0:
                     product_data = [
-                        ('Liquid Argon', 'Cryogenic product - Liquid Argon'),
-                        ('Liquid Carbon Dioxide', 'Cryogenic product - Liquid CO2'),
-                        ('Liquid Oxygen', 'Cryogenic product - Liquid O2'),
-                        ('Liquid Nitrogen', 'Cryogenic product - Liquid N2'),
-                        ('Others', 'Other product - specified in notes'),
+                        ('Liquid Argon', 'Cryogenic product - Liquid Argon', 3),
+                        ('Liquid Carbon Dioxide', 'Cryogenic product - Liquid CO2', 8),
+                        ('Liquid Oxygen', 'Cryogenic product - Liquid O2', 1),
+                        ('Liquid Nitrogen', 'Cryogenic product - Liquid N2', 2),
+                        ('Others', 'Other product - specified in notes', None),
+                        ('Ethylene', 'Ethylene gas', 6),
+                        ('Ethane','Ethane gas', None),
+                        ('Methane','Methane gas', None),
+                        ('Nitrous Oxide','Nitrous Oxide gas', 7),
                     ]
-                    for product_name, description in product_data:
+                    for product_name, description, un_code_id in product_data:
                         cursor.execute(
-                            "INSERT INTO product_master (product_name, description) VALUES (%s, %s)",
-                            (product_name, description),
+                            "INSERT INTO product_master (product_name, description, un_code_id) VALUES (%s, %s, %s)",
+                            (product_name, description, un_code_id),
                         )
                 conn2.commit()
                 safe_select_and_print("product_master")

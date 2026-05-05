@@ -70,7 +70,7 @@ def init_seed_data(db: Session):
         
     try:
         from app.models.mawp_master_model import MawpMaster
-        mawp_values = ["21.4 bar", "22.0 bar", "24.0 bar"]
+        mawp_values = ["21.4 bar", "22.0 bar", "24.0 bar","10.0 bar","16.0 bar","18.0 bar","20.0 bar"]
         MawpMaster.__table__.create(db.get_bind(), checkfirst=True)
         for m in mawp_values:
             if not db.query(MawpMaster).filter_by(mawp_value=m).first():
@@ -84,7 +84,7 @@ def init_seed_data(db: Session):
         # --- 6. Seed DesignTemperatureMaster ---
     try:
         from app.models.design_temperature_master_model import DesignTemperatureMaster
-        temps = ["-40 C to 50 C", "-196 C to 50 C"]
+        temps = ["CS / -40 C to 50 C", "SS / -196 C to 50 C", "-45 C to 55 C", "-45 C to 65 C"]
         DesignTemperatureMaster.__table__.create(db.get_bind(), checkfirst=True)
         for t in temps:
             if not db.query(DesignTemperatureMaster).filter_by(design_temperature=t).first():
@@ -100,14 +100,11 @@ def init_seed_data(db: Session):
     try:
         from app.models.size_master_model import SizeMaster
         sizes = [
-            {"size_code": "22", "size_label": "20 Feet * 8 Feet"},
-            {"size_code": "25", "size_label": "20 Feet * 9 Feet"},
-            {"size_code": "42", "size_label": "40 Feet * 8 Feet"},
-            {"size_code": "45", "size_label": "40 Feet * 9 Feet"},
-            {"size_code": "52", "size_label": "45 Feet* 8 Feet"},
-            {"size_code": "55", "size_label": "45 Feet* 9 Feet"},
-            {"size_code": "M2", "size_label": "48 Feet * 8 Feet"},
-            {"size_code": "M5", "size_label": "48 Feet * 9 Feet"},
+            {"size_code": "20'", "size_label": "20'"},
+            {"size_code": "20' * 16", "size_label": "20' * 16"},
+            {"size_code": "22 * 12", "size_label": "22 * 12"},
+            {"size_code": "40 * 12", "size_label": "40 * 12"},
+            {"size_code": "40 * 8", "size_label": "40 * 8"},
         ]
         SizeMaster.__table__.create(db.get_bind(), checkfirst=True)
         for s in sizes:
@@ -126,6 +123,7 @@ def init_seed_data(db: Session):
         frame_types = [
             {"frame_type": "Frame T-1/Frame Tank", "description": "Cross Member / Frame T-1"},
             {"frame_type": "Frame T-2/Beam Tank", "description": "Cross Member / Frame T-2"},
+            {"frame_type": "Frame T-3/Others", "description": "Cross Member / Frame T-3"},
         ]
         FrameTypeMaster.__table__.create(db.get_bind(), checkfirst=True)
         for ft in frame_types:
@@ -210,7 +208,7 @@ def init_seed_data(db: Session):
 # --- Seed OwnershipMaster ---
     try:
         from app.models.ownership_master_model import OwnershipMaster
-        ownerships = ["albatross", "Smart Gas", "ABC1"]
+        ownerships = ["Lease", "Smart Gas", "Others"]
         OwnershipMaster.__table__.create(db.get_bind(), checkfirst=True)
         for name in ownerships:
             if not db.query(OwnershipMaster).filter_by(ownership_name=name).first():
@@ -323,4 +321,46 @@ def init_seed_data(db: Session):
         print("MasterGauge seeded successfully.")
     except Exception as e:
         print(f"Error seeding MasterGauge: {e}")
+        db.rollback()
+
+    # --- Seed PVCodeMaster ---
+    try:
+        from app.models.pv_code_master_model import PVCodeMaster
+        pv_codes = ["ASME / IMDG", "B31.8 / ISO 668", "EN13530 / IMDG", "GB150 / IMDG", "ISO11120 / IMDG","NA"]
+        PVCodeMaster.__table__.create(db.get_bind(), checkfirst=True)
+        for code in pv_codes:
+            if not db.query(PVCodeMaster).filter_by(pv_name=code).first():
+                db.add(PVCodeMaster(pv_name=code))
+        db.commit()
+        print("PVCodeMaster seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding PVCodeMaster: {e}")
+        db.rollback()
+
+    # --- Seed EvacuationValveTypeMaster ---
+    try:
+        from app.models.evacuation_valve_type_master_model import EvacuationValveTypeMaster
+        valve_types = ["P&S", "SDR", "ZK50-8", "ZK50-4"]
+        EvacuationValveTypeMaster.__table__.create(db.get_bind(), checkfirst=True)
+        for vt in valve_types:
+            if not db.query(EvacuationValveTypeMaster).filter_by(evacuation_valve_type=vt).first():
+                db.add(EvacuationValveTypeMaster(evacuation_valve_type=vt))
+        db.commit()
+        print("EvacuationValveTypeMaster seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding EvacuationValveTypeMaster: {e}")
+        db.rollback()
+
+    # --- Seed ColorBodyFrameMaster ---
+    try:
+        from app.models.color_body_frame_master_model import ColorBodyFrameMaster
+        color_values = ["White and Blue", "White"]
+        ColorBodyFrameMaster.__table__.create(db.get_bind(), checkfirst=True)
+        for val in color_values:
+            if not db.query(ColorBodyFrameMaster).filter_by(color_body_frame=val).first():
+                db.add(ColorBodyFrameMaster(color_body_frame=val))
+        db.commit()
+        print("ColorBodyFrameMaster seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding ColorBodyFrameMaster: {e}")
         db.rollback()

@@ -75,7 +75,8 @@ class FullInspectionChecklistCreate(BaseModel):
     
     class Config:
         json_schema_extra = {
-            "example": {
+            "examples": [
+                {
                 "inspection_id":"",
                 "tank_id": " ",
                 "sections": [
@@ -154,7 +155,8 @@ class FullInspectionChecklistCreate(BaseModel):
                     }
                 ]
             }
-        }
+        ]
+    }
 
 
 # -------------------------
@@ -357,27 +359,12 @@ def _sync_flagged_to_todo(cursor, checklist_id: int):
 
 
 @router.get("/inspection_status")
-def get_inspection_status():
-    conn = get_db_connection()
+def get_inspection_status(db: Session = Depends(get_db)):
     try:
-        with conn.cursor(DictCursor) as cursor:
-            try:
-                cursor.execute("SELECT * FROM inspection_status ORDER BY status_id")
-            except Exception:
-                try:
-                    cursor.execute("SELECT * FROM inspection_status ORDER BY id")
-                except Exception:
-                    cursor.execute("SELECT * FROM inspection_status")
-            raw = cursor.fetchall() or []
-            rows = []
-            for r in raw:
-                rows.append({
-                    "id": r.get("status_id") or r.get("id"),
-                    "name": r.get("status_name") or r.get("name") or None,
-                })
-            return _success(rows)
-    finally:
-        conn.close()
+        results = db.execute(text("CALL sp_GetInspectionStatus()")).mappings().fetchall()
+        return _success([dict(r) for r in results])
+    except Exception as e:
+        return _error(f"Error fetching status: {str(e)}", 500)
 
 
 # NOTE: /export/checklist endpoint has been moved to tank_checklist_router.py
@@ -491,12 +478,20 @@ def create_inspection_checklist_bulk(
     tank_id = payload.tank_id
 
     # 🔵 Submission check
-    insp = db.execute(text("SELECT is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id=:id"), {"id": inspection_id}).fetchone()
+    insp = db.execute(text("CALL sp_GetReportNumber(:tid, :iid)"), {"tid": tank_id, "iid": inspection_id}).mappings().first()
+    # Note: Using sp_GetReportNumber here as a proxy to check if record exists/is submitted
+    # In a real scenario, you might want a more specific SP like sp_GetInspectionHeader
     if insp:
-        urow = db.execute(text("SELECT role_id FROM users WHERE emp_id=:emp_id"), {"emp_id": emp_id}).fetchone()
-        role_id = urow[0] if urow else None
+        urow = db.execute(text("CALL sp_GetUserDetails(:eid)"), {"eid": emp_id}).mappings().first()
+        # Fallback if sp_GetUserDetails takes login_name:
+        if not urow:
+            urow = db.execute(text("SELECT role_id FROM users WHERE emp_id=:emp_id"), {"emp_id": emp_id}).mappings().first()
+            
+        role_id = urow["role_id"] if urow else None
 
-        if (getattr(insp, 'is_submitted', 0) == 1 or getattr(insp, 'web_submitted', 0) == 1) and role_id == 2:
+        # Check submission in tank_inspection_details
+        insp_detail = db.execute(text("SELECT is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id=:id"), {"id": inspection_id}).mappings().first()
+        if insp_detail and (insp_detail.get('is_submitted', 0) == 1 or insp_detail.get('web_submitted', 0) == 1) and role_id == 2:
             raise HTTPException(status_code=403, detail="Cannot create checklist for submitted inspection")
 
     try:
@@ -692,25 +687,26 @@ def create_inspection_checklist_bulk(
                     except Exception:
                         pass
 
-                    # ---- INSERT the checklist row ----
-                    db.execute(text(
-                        "INSERT INTO inspection_checklist (inspection_id, tank_id, emp_id, job_id, job_name, sn, sub_job_id, sub_job_description, status_id, status, comment, image_id_assigned, flagged, created_at)"
-                        " VALUES (:inspection_id, :tank_id, :emp_id, :job_id, :job_name, :sn, :sub_job_id, :sub_job_description, :status_id, :status, :comment, :image_id_assigned, :flagged, NOW())"
+                    # ---- INSERT the checklist row using SP ----
+                    res = db.execute(text(
+                        "CALL sp_InsertChecklistRow(:insp_id, :tid, :eid, :jid, :jname, :sn, :sid, :sdesc, :stid, :stname, :comm, :img, :flag)"
                     ), {
-                        "inspection_id": inspection_id,
-                        "tank_id": tank_id,
-                        "emp_id": emp_id,
-                        "job_id": db_job_id if db_job_id is not None else section.job_id,
-                        "job_name": job_name_val,
+                        "insp_id": inspection_id,
+                        "tid": tank_id,
+                        "eid": emp_id,
+                        "jid": db_job_id if db_job_id is not None else section.job_id,
+                        "jname": job_name_val,
                         "sn": sn_val,
-                        "sub_job_id": sub_row.get("sub_job_id") or sub_row.get("sub_job_id"),
-                        "sub_job_description": getattr(item, 'title', None),
-                        "status_id": status_id_final,
-                        "status": status_name_val,
-                        "comment": getattr(item, 'comments', None),
-                        "image_id_assigned": getattr(item, 'image_id_assigned', None) if getattr(item, 'image_id_assigned', None) != "" else None,
-                        "flagged": flagged_val,
-                    })
+                        "sid": sub_row.get("sub_job_id"),
+                        "sdesc": getattr(item, 'title', None),
+                        "stid": status_id_final,
+                        "stname": status_name_val,
+                        "comm": getattr(item, 'comments', None),
+                        "img": getattr(item, 'image_id_assigned', None) if getattr(item, 'image_id_assigned', None) != "" else None,
+                        "flag": flagged_val,
+                    }).mappings().first()
+                    
+                    checklist_id = res["checklist_id"]
 
                     # Update is_assigned in tank_images if image_id_assigned is provided
                     assigned_ids_str = getattr(item, 'image_id_assigned', None)
@@ -726,41 +722,12 @@ def create_inspection_checklist_bulk(
                                 f"UPDATE tank_images SET is_assigned = 1 WHERE inspection_id = :insp_id AND image_id IN ({placeholders}) AND is_marked = 1"
                             ), params)
 
-                    # Only sync flagged items (status_id == 2) into to_do_list
-                    # After inserting inspection_checklist row above:
+                    # Only sync flagged items (status_id == 2) into to_do_list using SP
                     if flagged_val:
                         try:
-                            # select the most recent row matching the unique tuple we inserted (inspection, tank, job, sub_job)
-                            sel = db.execute(text(
-                                "SELECT id, job_name, sub_job_description, sn, status_id, comment, created_at, tank_id, inspection_id "
-                                "FROM inspection_checklist "
-                                "WHERE inspection_id = :inspection_id AND tank_id = :tank_id AND job_id = :job_id AND sub_job_id = :sub_job_id "
-                                "ORDER BY id DESC LIMIT 1"
-                            ), {
-                                "inspection_id": inspection_id,
-                                "tank_id": tank_id,
-                                "job_id": db_job_id if db_job_id is not None else section.job_id,
-                                "sub_job_id": sub_row.get("sub_job_id")
-                            }).mappings().fetchone()
-
-                            if sel:
-                                db.execute(text(
-                                    "INSERT INTO to_do_list (checklist_id, inspection_id, tank_id, job_name, sub_job_description, sn, status_id, comment, created_at) "
-                                    "VALUES (:checklist_id, :inspection_id, :tank_id, :job_name, :sub_job_description, :sn, :status_id, :comment, :created_at) "
-                                    "ON DUPLICATE KEY UPDATE inspection_id=VALUES(inspection_id), tank_id=VALUES(tank_id), job_name=VALUES(job_name), sub_job_description=VALUES(sub_job_description), sn=VALUES(sn), status_id=VALUES(status_id), comment=VALUES(comment), created_at=VALUES(created_at)"
-                                ), {
-                                    "checklist_id": sel["id"],
-                                    "inspection_id": sel["inspection_id"],
-                                    "tank_id": sel["tank_id"],
-                                    "job_name": sel["job_name"],
-                                    "sub_job_description": sel["sub_job_description"],
-                                    "sn": sel["sn"] or "",
-                                    "status_id": sel["status_id"],
-                                    "comment": sel["comment"],
-                                    "created_at": sel["created_at"]
-                                })
+                            db.execute(text("CALL sp_SyncToDoList(:cid)"), {"cid": checklist_id})
                         except Exception:
-                            logger.exception("Failed to sync flagged item into to_do_list")
+                            logger.exception(f"Failed to sync flagged item {checklist_id} into to_do_list")
 
         db.commit()
 

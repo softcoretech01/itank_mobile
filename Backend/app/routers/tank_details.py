@@ -4,6 +4,7 @@ import os
 import shutil
 import uuid
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from app.models.users_model import User
 from app.database import get_db
@@ -30,6 +31,7 @@ from app.models.un_code_master_model import UNISOCODEMaster
 from app.routers.tank_inspection_router import get_current_user
 from app.models.multiple_regulation import MultipleRegulation
 from app.models.regulations_master import RegulationsMaster
+from app.models.pv_code_master_model import PVCodeMaster
 
 # --- Helper function to convert "" to None for numeric types ---
 def to_float_or_none(value: any) -> float | None:
@@ -39,6 +41,15 @@ def to_float_or_none(value: any) -> float | None:
         return float(value)
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail=f"Invalid numeric value: {value}")
+
+
+def to_int_or_none(value: any) -> int | None:
+    if value == "" or value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid integer value: {value}")
 
 
 def resolve_names_from_ids(db: Session, model, id_list, id_field='id', name_field='standard_name'):
@@ -65,7 +76,7 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
     # Allow clients to provide either a size_id (master id) or a free-form `size` string.
     required_fields = [
         "tank_number", "manufacturer_id",
-        "capacity_l", "mawp_id", "date_mfg", "un_code", "initial_test", "design_temperature_id", "tare_weight_kg",
+        "capacity_l", "mawp_id", "date_mfg", "un_code", "design_temperature_id", "tare_weight_kg",
         "mgw_kg", "pump_id",
         "tank_iso_code_id", "cabinet_id", "frame_type_id", "ownership_id"
     ]
@@ -96,7 +107,11 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
         # leave empty; it's optional depending on your UI
         standard_names = []
     
-    tank_iso_code = db.query(TankCodeISOMaster).filter_by(id=data.get("tank_iso_code_id")).first()
+    tank_iso_code = db.execute(text("CALL sp_GetTankCodeById(:id)"), {"id": data.get("tank_iso_code_id")}).mappings().first()
+    if not tank_iso_code:
+        # Fallback if SP name is different or using inline
+        tank_iso_code = db.execute(text("SELECT tankcode_iso FROM tankcode_iso_master WHERE id = :id"), {"id": data.get("tank_iso_code_id")}).mappings().first()
+    
     if not tank_iso_code: raise HTTPException(status_code=400, detail=f"Invalid tank_iso_code_id")
     
     # UN CODES: frontend will send selected un_code ids in `un_code` as list or as comma-separated string of codes.
@@ -115,7 +130,7 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
         elif s.replace(',', '').isdigit():
             # if string of numbers separated by commas, try to resolve as ids
             ids = [p.strip() for p in s.split(',') if p.strip()]
-            un_code_names = resolve_names_from_ids(db, UNISOCODEMaster, ids, id_field='id', name_field='un_iso_code')
+            un_code_names = resolve_names_from_ids(db, UNISOCODEMaster, ids, id_field='id', name_field='un_code')
             if not un_code_names:
                 # fallback: treat original string as codes
                 un_code_names = [p.strip() for p in s.split(',') if p.strip()]
@@ -172,25 +187,17 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
 
     # Standard is now optional, can be null
 
-    existing_tank = db.query(Tank).filter(Tank.tank_number == data["tank_number"]).first()
-    if existing_tank:
-        raise HTTPException(status_code=400, detail=f"Tank number '{data['tank_number']}' already exists")
+    # existing_tank = db.query(Tank).filter(Tank.tank_number == data["tank_number"]).first()
+    # if existing_tank:
+    #     raise HTTPException(status_code=400, detail=f"Tank number '{data['tank_number']}' already exists")
 
-    tank = Tank(
-        tank_number=data["tank_number"],
-        created_by=emp_id,
-        updated_by=emp_id
-    )
-    db.add(tank)
-    db.commit()
-    db.refresh(tank)
-
-    status = data.get("status", "active")
-    if status not in ["active", "inactive"]:
-        raise HTTPException(status_code=400, detail="status must be 'active' or 'inactive'")
-    tank.status = status
-    db.commit()
-    db.refresh(tank)
+    # Use SP to create tank header
+    res = db.execute(
+        text("CALL sp_ManageTankHeader(:id, :tnum, :eid, :stat)"),
+        {"id": 0, "tnum": data["tank_number"], "eid": emp_id, "stat": data.get("status", "active")}
+    ).mappings().first()
+    
+    tank_id = res["id"]
     
     try:
         # Validate that tare_weight is less than mgw
@@ -211,15 +218,15 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
 
         mpl_kg = mgw_val - tare_val
         tank_detail = TankDetails(
-            tank_id=tank.id,
+            tank_id=tank_id,
             tank_number=data["tank_number"],
-            status=status,
+            status=data.get("status", "active"),
             mfgr=manufacturer.manufacturer_name,
             date_mfg=data.get("date_mfg") or None,
             initial_test=data.get("initial_test") or None,
                 # store comma-separated names (not ids)
                 un_code=','.join(un_code_names) if un_code_names else (data.get("un_code") or None),
-            tank_iso_code=tank_iso_code.tankcode_iso,
+            tank_iso_code=tank_iso_code.get("tankcode_iso"),
                 standard=','.join(standard_names) if standard_names else (data.get("standard") or None),
             capacity_l=to_float_or_none(data["capacity_l"]),
             mawp=mawp.mawp_value,
@@ -240,51 +247,57 @@ def create_tank(data: dict, db: Session = Depends(get_db),current_user: User = D
             updated_by=emp_id,
             color_body_frame=data.get("color_body_frame"),
             evacuation_valve=data.get("evacuation_valve"),
-            product_id=data.get("product_id"),
-            safety_valve_brand_id=data.get("safety_valve_brand_id"),
-            tank_number_image_path=data.get("tank_number_image_path")
+            product_id=','.join(map(str, data.get("product_id"))) if isinstance(data.get("product_id"), list) else (str(data.get("product_id")) if data.get("product_id") else None),
+            safety_valve_brand_id=to_int_or_none(data.get("safety_valve_brand_id")),
+            pv_id=to_int_or_none(data.get("pv_id")),
+            tank_number_image_path=data.get("tank_number_image_path"),
+            remark2=data.get("remark2")
         )
 
         db.add(tank_detail)
+
+        # Store multiple regulations using inline query for now or add an SP if needed
+        if "regulations" in data and isinstance(data["regulations"], list):
+            for reg_id in data["regulations"]:
+                reg_master = db.execute(text("SELECT regulation_name FROM regulations_master WHERE id = :id"), {"id": reg_id}).mappings().first()
+                if reg_master:
+                    db.execute(text(
+                        "INSERT INTO multiple_regulation (tank_id, regulation_id, regulation_name) VALUES (:tid, :rid, :rname)"
+                    ), {"tid": tank_id, "rid": reg_id, "rname": reg_master["regulation_name"]})
+        
         db.commit()
         db.refresh(tank_detail)
 
-        # Store multiple regulations
-        if "regulations" in data and isinstance(data["regulations"], list):
-            for reg_id in data["regulations"]:
-                reg_master = db.query(RegulationsMaster).filter(RegulationsMaster.id == reg_id).first()
-                if reg_master:
-                    new_reg = MultipleRegulation(
-                        tank_id=tank.id,
-                        regulation_id=reg_id,
-                        regulation_name=reg_master.regulation_name
-                    )
-                    db.add(new_reg)
-            db.commit()
+        # SYNC to Checklist/ToDo
+        try:
+            from app.routers.tank_checkpoints_router import sync_tank_to_checklist
+            sync_tank_to_checklist(db, tank_detail)
+        except Exception as e:
+            print(f"Checklist sync failed: {e}")
 
-    # Let validation errors (HTTPException) pass through with their own status & message
+    # Let validation errors (HTTPException) pass through
     except HTTPException as e:
         db.rollback()
-        db.delete(tank)
-        db.commit()
         raise e
 
-    # Any other unexpected error becomes a 500
+    # Any other unexpected error
     except Exception as e:
         db.rollback()
-        db.delete(tank)
-        db.commit()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create tank details: {str(e)}",
         )
 
     return {
+        "success": True,
         "message": "Tank created successfully",
-        "tank_id": tank.id,
+        "tank_id": tank_id,
         "data": {
-            "tank_header": tank,
-            "tank_details": tank_detail
+            "tank_details": {
+                "id": tank_detail.id,
+                "tank_id": tank_detail.tank_id,
+                "tank_number": tank_detail.tank_number
+            }
         }
     }
 
@@ -308,49 +321,16 @@ def upload_tank_image(file: UploadFile = File(...)):
 
 @router.get("/")
 def get_all_tanks(db: Session = Depends(get_db)):
-    results = db.query(Tank, TankDetails).join(TankDetails, Tank.id == TankDetails.tank_id).all()
-    
-    response_data = []
-    for r in results:
-        tank_id = r[0].id
-        regulations = db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).all()
-        regulation_names = ", ".join([reg.regulation_name for reg in regulations])
-
-        response_data.append({
-            "id": r[0].id,
-            "tank_number": r[0].tank_number,
-            "status": r[1].status,
-            "mfgr": r[1].mfgr,
-            "date_mfg": r[1].date_mfg,
-            "initial_test": r[1].initial_test,
-            "un_code": r[1].un_code, 
-            "tank_iso_code": r[1].tank_iso_code,
-            "standard": r[1].standard,
-            "capacity_l": r[1].capacity_l,
-            "mawp": r[1].mawp,
-            "design_temperature": r[1].design_temperature,
-            "tare_weight_kg": r[1].tare_weight_kg,
-            "mgw_kg": r[1].mgw_kg,
-            "mpl_kg": r[1].mpl_kg,
-            "size": r[1].size,
-            "pump_type": r[1].pump_type,
-            "gross_kg": r[1].gross_kg,
-            "net_kg": r[1].net_kg,
-            "working_pressure": r[1].working_pressure,
-            "cabinet_type": r[1].cabinet_type,
-            "frame_type": r[1].frame_type,
-            "remark": r[1].remark,
-            "owner": r[1].ownership, 
-            "created_by": r[0].created_by,
-            "color_body_frame": r[1].color_body_frame,
-            "evacuation_valve": r[1].evacuation_valve,
-            "product_id": r[1].product_id,
-            "safety_valve_brand_id": r[1].safety_valve_brand_id,
-            "tank_number_image_path": to_cdn_url(r[1].tank_number_image_path) if r[1].tank_number_image_path else None,
-            "regulations": regulation_names
-        })
-    
-    return response_data
+    try:
+        results = db.execute(text("CALL sp_GetAllTanks()")).mappings().fetchall()
+        data = []
+        for r in results:
+            d = dict(r)
+            d["owner"] = d.get("ownership")
+            data.append(d)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching tanks: {str(e)}")
 
 # --- EXPORT TO EXCEL ---
 @router.get("/export-to-excel")
@@ -383,8 +363,8 @@ def export_to_excel(db: Session = Depends(get_db)):
         cell.alignment = header_alignment
     
     for row_num, (tank, tank_detail) in enumerate(results, 2):
-        ws.cell(row=row_num, column=1, value=tank_detail.id)
-        ws.cell(row=row_num, column=2, value=tank_detail.tank_id)
+        ws.cell(row=row_num, column=1, value=tank.id)
+        ws.cell(row=row_num, column=2, value=tank.id)
         ws.cell(row=row_num, column=3, value=tank_detail.tank_number or tank.tank_number)
         ws.cell(row=row_num, column=4, value=tank_detail.status)
         ws.cell(row=row_num, column=5, value=tank_detail.mfgr)
@@ -437,11 +417,14 @@ def export_to_excel(db: Session = Depends(get_db)):
 # --- UPDATE TANK ---
 @router.put("/{tank_id}")
 def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    tank = db.query(Tank).filter(Tank.id == tank_id).first()
-    tank_detail = db.query(TankDetails).filter(TankDetails.tank_id == tank_id).first()
-
-    if not tank or not tank_detail:
+    # Use SP to get tank record
+    tank_row = db.execute(text("CALL sp_GetTankById(:tid)"), {"tid": tank_id}).mappings().first()
+    if not tank_row:
         raise HTTPException(status_code=404, detail="Tank not found")
+    
+    # We still need a model object for SQLAlchemy updates if we don't have an sp_UpdateTankDetails
+    # But let's use the ORM object for the detail part for now and SP for header
+    tank_detail = db.query(TankDetails).filter(TankDetails.tank_id == tank_id).first()
 
     # Get emp_id from the logged-in user
     if not current_user or not getattr(current_user, "emp_id", None):
@@ -452,26 +435,29 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
 
     emp_id = str(current_user.emp_id)
 
-    # 1. Handle Renaming
+    # 1. Handle Renaming using SP
     if "tank_number" in data:
         new_tank_number = data["tank_number"]
-        if new_tank_number != tank.tank_number:
-            existing = db.query(Tank).filter(Tank.tank_number == new_tank_number).first()
+        if new_tank_number != tank_row["tank_number"]:
+            # Check unique
+            existing = db.execute(text("SELECT id FROM tank WHERE tank_number = :tnum LIMIT 1"), {"tnum": new_tank_number}).mappings().first()
             if existing:
                 raise HTTPException(status_code=400, detail=f"Tank number '{new_tank_number}' already exists")
             
-            tank_detail.tank_number = None
-            tank.tank_number = new_tank_number
+            db.execute(
+                text("CALL sp_ManageTankHeader(:id, :tnum, :eid, :stat)"),
+                {"id": tank_id, "tnum": new_tank_number, "eid": emp_id, "stat": data.get("status") or tank_row["status"]}
+            )
             db.commit()
             tank_detail.tank_number = new_tank_number
-    
-    tank.updated_by = emp_id
-
-    if "status" in data:
-        status = data["status"]
-        if status not in ["active", "inactive"]:
-            raise HTTPException(status_code=400, detail="status must be 'active' or 'inactive'")
-        tank.status = status
+    else:
+        # Update status if header changed
+        if "status" in data:
+            db.execute(
+                text("CALL sp_ManageTankHeader(:id, :tnum, :eid, :stat)"),
+                {"id": tank_id, "tnum": tank_row["tank_number"], "eid": emp_id, "stat": data["status"]}
+            )
+            db.commit()
 
     if "owner" in data:
         data["ownership"] = data["owner"]
@@ -485,7 +471,7 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
         "working_pressure", "cabinet_type", "frame_type",
         "tank_iso_code", "standard",
         "color_body_frame", "evacuation_valve", "tank_number_image_path",
-        "product_id", "safety_valve_brand_id"
+        "product_id", "safety_valve_brand_id", "pid_id", "ga_id", "remark2", "pv_id"
     ]
 
     for field in detail_fields:
@@ -495,6 +481,16 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
             # special handling: numeric fields
             if field in ["capacity_l", "tare_weight_kg", "mgw_kg", "mpl_kg", "gross_kg", "net_kg"]:
                 setattr(tank_detail, field, to_float_or_none(value))
+            elif field in ["pv_id", "safety_valve_brand_id", "pid_id", "ga_id"]:
+                setattr(tank_detail, field, to_int_or_none(value))
+            elif field == "product_id":
+                # Handle multiple product_ids as comma-separated string
+                if isinstance(value, list):
+                    setattr(tank_detail, field, ','.join(map(str, value)) if value else None)
+                elif value:
+                    setattr(tank_detail, field, str(value))
+                else:
+                    setattr(tank_detail, field, None)
             elif field == "mawp" or field == "working_pressure":
                 # MAWP and working pressure are string fields (e.g., '21.4 bar')
                 setattr(tank_detail, field, value)
@@ -520,28 +516,33 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
                     s = value.strip()
                     if s.replace(',', '').isdigit():
                         ids = [p.strip() for p in s.split(',') if p.strip()]
-                        names = resolve_names_from_ids(db, UNISOCODEMaster, ids, id_field='id', name_field='un_iso_code')
+                        names = resolve_names_from_ids(db, UNISOCODEMaster, ids, id_field='id', name_field='un_code')
                         setattr(tank_detail, field, ','.join(names) if names else s)
                     else:
                         setattr(tank_detail, field, s)
+            elif field == "tank_number_image_path":
+                from app.utils.s3_utils import CLOUDFRONT_BASE_URL
+                if value and CLOUDFRONT_BASE_URL and str(value).startswith(CLOUDFRONT_BASE_URL):
+                    # Strip prefix + potential leading slash
+                    cleaned_path = str(value).replace(CLOUDFRONT_BASE_URL, "").lstrip("/")
+                    setattr(tank_detail, field, cleaned_path)
+                else:
+                    setattr(tank_detail, field, value)
             else:
                 setattr(tank_detail, field, value)
 
     # Handle Multiple Regulations Sync
     if "regulations" in data and isinstance(data["regulations"], list):
         # 1. Delete old links
-        db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).delete()
+        db.execute(text("DELETE FROM multiple_regulation WHERE tank_id = :tid"), {"tid": tank_id})
         
         # 2. Add new links
         for reg_id in data["regulations"]:
-            reg_master = db.query(RegulationsMaster).filter(RegulationsMaster.id == reg_id).first()
+            reg_master = db.execute(text("SELECT regulation_name FROM regulations_master WHERE id = :id"), {"id": reg_id}).mappings().first()
             if reg_master:
-                new_reg = MultipleRegulation(
-                    tank_id=tank.id,
-                    regulation_id=reg_id,
-                    regulation_name=reg_master.regulation_name
-                )
-                db.add(new_reg)
+                db.execute(text(
+                    "INSERT INTO multiple_regulation (tank_id, regulation_id, regulation_name) VALUES (:tid, :rid, :rname)"
+                ), {"tid": tank_id, "rid": reg_id, "rname": reg_master["regulation_name"]})
         db.commit()
 
     # Set updated_by for tank_detail
@@ -570,7 +571,6 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
 
     try:
         db.commit()
-        db.refresh(tank)
         db.refresh(tank_detail)
     except Exception as e:
         db.rollback()
@@ -581,15 +581,12 @@ def update_tank(tank_id: int, data: dict, db: Session = Depends(get_db), current
 
 @router.delete("/{tank_id}")
 def delete_tank(tank_id: int, db: Session = Depends(get_db), authorization: str = Header(...)):
-    tank_detail = db.query(TankDetails).filter(TankDetails.tank_id == tank_id).first()
-    tank = db.query(Tank).filter(Tank.id == tank_id).first()
-
+    # Check if exists
+    tank = db.execute(text("CALL sp_GetTankById(:tid)"), {"tid": tank_id}).mappings().first()
     if not tank:
         raise HTTPException(status_code=404, detail="Tank not found")
 
-    if tank_detail:
-        db.delete(tank_detail)
-    db.delete(tank)
+    db.execute(text("CALL sp_DeleteTank(:tid)"), {"tid": tank_id})
     db.commit()
 
     return {"message": "Tank deleted successfully"}
@@ -597,62 +594,31 @@ def delete_tank(tank_id: int, db: Session = Depends(get_db), authorization: str 
 # --- GET BY ID ---
 @router.get("/{tank_id}")
 def get_tank_by_id(tank_id: int, db: Session = Depends(get_db)):
-    tank = db.query(Tank).filter(Tank.id == tank_id).first()
-    tank_detail = db.query(TankDetails).filter(TankDetails.tank_id == tank_id).first()
-
-    if not tank or not tank_detail:
-        raise HTTPException(status_code=404, detail="Tank not found")
-
-    # Fetch Multiple Regulations
-    linked_regulations = db.query(MultipleRegulation).filter(MultipleRegulation.tank_id == tank_id).all()
-    regulation_ids = [reg.regulation_id for reg in linked_regulations]
-
-    return {
-        "id": tank.id,
-        "tank_number": tank.tank_number,
-        "initial_test": tank_detail.initial_test,
-        "status": tank_detail.status,
-        "mfgr": tank_detail.mfgr,
-        "date_mfg": tank_detail.date_mfg,
-        "un_code": tank_detail.un_code, # CHANGED: un_iso_code -> un_code
-        "tank_iso_code": tank_detail.tank_iso_code,
-        "standard": tank_detail.standard,
-        "capacity_l": tank_detail.capacity_l,
-        "mawp": tank_detail.mawp,
-        "design_temperature": tank_detail.design_temperature,
-        "tare_weight_kg": tank_detail.tare_weight_kg,
-        "mgw_kg": tank_detail.mgw_kg,
-        "mpl_kg": tank_detail.mpl_kg,
-        "size": tank_detail.size,
-        "pump_type": tank_detail.pump_type,
-        "gross_kg": tank_detail.gross_kg,
-        "net_kg": tank_detail.net_kg,
-        "remark": tank_detail.remark,
-        "owner": tank_detail.ownership, 
-        "created_by": tank.created_by,
-        "updated_by": tank.updated_by,
-        "working_pressure": tank_detail.working_pressure,
-        "cabinet_type": tank_detail.cabinet_type,
-        "frame_type": tank_detail.frame_type,
-        "color_body_frame": tank_detail.color_body_frame,
-        "evacuation_valve": tank_detail.evacuation_valve,
-        "product_id": tank_detail.product_id,
-        "safety_valve_brand_id": tank_detail.safety_valve_brand_id,
-        "tank_number_image_path": to_cdn_url(tank_detail.tank_number_image_path) if tank_detail.tank_number_image_path else None,
-        "regulations": regulation_ids
-    }
-
-@router.get("/by-number/{tank_number}")
-def get_tank_by_number(tank_number: str, db: Session = Depends(get_db)):
-    tank = db.query(Tank).filter(Tank.tank_number == tank_number).first()
+    tank = db.execute(text("CALL sp_GetTankById(:tid)"), {"tid": tank_id}).mappings().first()
     if not tank:
         raise HTTPException(status_code=404, detail="Tank not found")
 
-    tank_detail = db.query(TankDetails).filter(TankDetails.tank_id == tank.id).first()
-    if not tank_detail:
-        raise HTTPException(status_code=404, detail="Tank details not found")
+    # Fetch Multiple Regulations
+    linked_regulations = db.execute(text("CALL sp_GetMultipleRegulations(:tid)"), {"tid": tank_id}).mappings().fetchall()
+    regulation_ids = [reg["regulation_id"] for reg in linked_regulations]
+
+    resp = dict(tank)
+    resp["owner"] = tank["ownership"]
+    resp["regulations"] = regulation_ids
+    if tank.get("tank_number_image_path"):
+        resp["tank_number_image_path"] = to_cdn_url(tank["tank_number_image_path"])
+    
+    return resp
+
+@router.get("/by-number/{tank_number}")
+def get_tank_by_number(tank_number: str, db: Session = Depends(get_db)):
+    tank = db.execute(text("CALL sp_GetTankByNumber(:tnum)"), {"tnum": tank_number}).mappings().first()
+    if not tank:
+        raise HTTPException(status_code=404, detail="Tank not found")
 
     return {
-        "tank_number": tank.tank_number,
-        "date_mfg": tank_detail.date_mfg
+        "tank_number": tank["tank_number"],
+        "date_mfg": tank["date_mfg"],
+        "owner": tank.get("ownership"),
+        "ownership": tank.get("ownership")
     }

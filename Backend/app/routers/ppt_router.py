@@ -41,27 +41,10 @@ def generate_ppt(payload: GenerateRequest, db: Session = Depends(get_db), author
         # 2. Get Report Number (Latest Inspection)
         report_number = "Unknown"
         try:
-            if payload.inspection_id:
-                insp_sql = text(
-                    """
-                    SELECT report_number
-                    FROM tank_inspection_details
-                    WHERE inspection_id = :iid AND tank_id = :tid
-                    """
-                )
-                params = {"iid": payload.inspection_id, "tid": payload.tank_id}
-            else:
-                insp_sql = text(
-                    """
-                    SELECT report_number
-                    FROM tank_inspection_details
-                    WHERE tank_id = :tid
-                    ORDER BY inspection_date DESC
-                    LIMIT 1
-                    """
-                )
-                params = {"tid": payload.tank_id}
-
+            # Using stored procedure for report number
+            insp_sql = text("CALL sp_GetReportNumber(:tid, :iid)")
+            params = {"tid": payload.tank_id, "iid": payload.inspection_id or 0}
+            
             result = db.execute(insp_sql, params).first()
             if result and result[0]:
                 report_number = result[0]
@@ -130,13 +113,8 @@ def get_tank_inspections(tank_id: int, db: Session = Depends(get_db)):
     Get list of report numbers and inspection IDs for a tank where is_submitted=1 or web_submitted=1
     """
     try:
-        sql = text("""
-            SELECT report_number, inspection_id
-            FROM tank_inspection_details
-            WHERE tank_id = :tid 
-              AND (is_submitted = 1 OR web_submitted = 1)
-            ORDER BY inspection_date DESC
-        """)
+        # Using stored procedure for tank inspections
+        sql = text("CALL sp_GetTankInspections(:tid)")
         results = db.execute(sql, {"tid": tank_id}).fetchall()
         
         return [

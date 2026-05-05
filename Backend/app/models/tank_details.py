@@ -6,10 +6,11 @@ class TankDetails(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tank_id = Column(Integer, ForeignKey("tank_header.id"), unique=True, index=True)
-    tank_number = Column(String(50), ForeignKey("tank_header.tank_number"), nullable=False)
+    tank_number = Column(String(50), nullable=False)
     tank_iso_code = Column(String(255), nullable=True)  # ISO code label from master
     # Allow multiple standard names stored as comma-separated values
     standard = Column(String(255), nullable=True)       # Standard label(s) from master
+    pv_id = Column(Integer, nullable=True)             # Pressure Vessel Code ID from master
     status = Column(String(20), default="active", nullable=False)
     mfgr = Column(String(255))       
     initial_test = Column(String(7), nullable=True)                   # Manufacturer label from master
@@ -30,10 +31,13 @@ class TankDetails(Base):
     frame_type = Column(String(100), nullable=True)      # Frame type label from master
     color_body_frame = Column(String(100), nullable=True)
     evacuation_valve = Column(String(100), nullable=True)
-    product_id = Column(Integer, index=True)
+    product_id = Column(Text, index=True, nullable=True)
     safety_valve_brand_id = Column(Integer, index=True)
+    pid_id = Column(Integer, index=True, nullable=True)
+    ga_id = Column(Integer, index=True, nullable=True)
     tank_number_image_path = Column(String(255), nullable=True)
     remark = Column(Text, nullable=True)
+    remark2 = Column(Text, nullable=True)
     ownership = Column(String(100), nullable=True)  # Ownership name from ownership_master
     created_by = Column(String(100), nullable=False)
     updated_by = Column(String(100), nullable=False)

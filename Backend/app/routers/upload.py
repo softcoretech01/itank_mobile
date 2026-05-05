@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, date
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -160,7 +160,7 @@ def upload_image(
         # Validate and normalize image type
         image_type = validate_image_type(image_type)
         
-        # Save file to disk (UPDATED LOGIC CALLED HERE)
+        # Save file to disk
         image_path = save_uploaded_file(
             file,
             tank_number,
@@ -169,44 +169,48 @@ def upload_image(
             MAX_UPLOAD_SIZE
         )
         
-        # Upsert into database
+        # Upsert into database using procedure
         today = date.today()
         
-        existing = db.query(TankImages).filter(
-            and_(
-                TankImages.tank_number == tank_number,
-                TankImages.image_type == image_type,
-                TankImages.created_date == today
-            )
-        ).first()
+        # We need to handle potential file cleanup before upsert if record exists
+        existing = db.execute(
+            text("CALL sp_GetTankImages_V2(:tank_number, :image_type)"),
+            {"tank_number": tank_number, "image_type": image_type}
+        ).mappings().fetchall()
         
-        if existing:
-            # Delete old file if it exists and path is different
-            # Note: With fixed filenames, path might be same, so we verify
-            if existing.image_path and existing.image_path != image_path:
-                delete_file_if_exists(UPLOAD_ROOT, existing.image_path)
-            
-            # Update existing record
-            existing.image_path = image_path
-            existing.emp_id = emp_id
-            existing.updated_at = datetime.now()
-            db.commit()
-            db.refresh(existing)
-            db_record = existing
-        else:
-            # Create new record
-            db_record = TankImages(
-                emp_id=emp_id,
-                tank_number=tank_number,
-                image_type=image_type,
-                image_path=image_path,
-                created_date=today
-            )
-            db.add(db_record)
-            db.commit()
-            db.refresh(db_record)
+        # Check for today's record specifically
+        today_record = next((r for r in existing if r["created_date"] == today), None)
         
-        response_data = build_image_response(db_record)
+        if today_record:
+            if today_record["image_path"] and today_record["image_path"] != image_path:
+                delete_file_if_exists(UPLOAD_ROOT, today_record["image_path"])
+        
+        result = db.execute(
+            text("CALL sp_UpsertTankImage_V2(:emp_id, :tank_number, :image_type, :image_path, :created_date)"),
+            {
+                "emp_id": emp_id,
+                "tank_number": tank_number,
+                "image_type": image_type,
+                "image_path": image_path,
+                "created_date": today
+            }
+        ).mappings().first()
+        
+        db.commit()
+        
+        response_data = TankImageDataSchema(
+            id=result["id"],
+            tank_number=result["tank_number"],
+            image_type=result["image_type"],
+            image_label=get_image_label(result["image_type"]),
+            image_path=result["image_path"],
+            created_at=result["created_at"].isoformat() if result["created_at"] else None,
+            updated_at=result["updated_at"].isoformat() if result["updated_at"] else None,
+            created_date=result["created_date"].isoformat() if result["created_date"] else None,
+            uploaded=True,
+            filename=os.path.basename(result["image_path"]) if result["image_path"] else None,
+            emp_id=result["emp_id"]
+        )
         return UploadResponseSchema(
             success=True,
             message="Image uploaded successfully",
@@ -238,74 +242,7 @@ def update_image(
     """
     Update today's image for a tank and image type (replace if exists).
     """
-    try:
-        # Validate tank exists
-        validate_tank(tank_number, db)
-        
-        # Validate and normalize image type
-        image_type = validate_image_type(image_type)
-        
-        today = date.today()
-        
-        # Check if existing image exists for today
-        existing = db.query(TankImages).filter(
-            and_(
-                TankImages.tank_number == tank_number,
-                TankImages.image_type == image_type,
-                TankImages.created_date == today
-            )
-        ).first()
-        
-        # Save new file first
-        # (With fixed filenames, this overwrites the file on disk immediately)
-        image_path = save_uploaded_file(
-            file,
-            tank_number,
-            image_type,
-            UPLOAD_ROOT,
-            MAX_UPLOAD_SIZE
-        )
-        
-        if existing:
-            # If path somehow changed (e.g. extension changed), delete old specific file
-            if existing.image_path and existing.image_path != image_path:
-                delete_file_if_exists(UPLOAD_ROOT, existing.image_path)
-
-            # Update existing record
-            existing.image_path = image_path
-            existing.emp_id = emp_id
-            existing.updated_at = datetime.now()
-            db.commit()
-            db.refresh(existing)
-            db_record = existing
-        else:
-            # Create new record
-            db_record = TankImages(
-                emp_id=emp_id,
-                tank_number=tank_number,
-                image_type=image_type,
-                image_path=image_path,
-                created_date=today
-            )
-            db.add(db_record)
-            db.commit()
-            db.refresh(db_record)
-        
-        response_data = build_image_response(db_record)
-        return UploadResponseSchema(
-            success=True,
-            message="Image updated successfully",
-            data=response_data
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating image: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error updating image"
-        )
+    return upload_image(tank_number, image_type, file, emp_id, db)
 
 
 @router.get("/{tank_number}/images", response_model=ImagesListResponseSchema, tags=["Upload"])
@@ -321,26 +258,48 @@ def get_tank_images(
         if image_type:
             image_type = validate_image_type(image_type)
         
-        query = db.query(TankImages).filter(TankImages.tank_number == tank_number)
-        
-        if image_type:
-            query = query.filter(TankImages.image_type == image_type)
-        
-        db_records = query.all()
+        results = db.execute(
+            text("CALL sp_GetTankImages_V2(:tank_number, :image_type)"),
+            {"tank_number": tank_number, "image_type": image_type or ""}
+        ).mappings().fetchall()
         
         response_data = []
         
         if image_type:
-            existing = next((r for r in db_records if r.image_type == image_type), None)
+            existing = next((r for r in results if r["image_type"] == image_type), None)
             if existing:
-                response_data.append(build_image_response(existing))
+                response_data.append(TankImageDataSchema(
+                    id=existing["id"],
+                    tank_number=existing["tank_number"],
+                    image_type=existing["image_type"],
+                    image_label=get_image_label(existing["image_type"]),
+                    image_path=existing["image_path"],
+                    created_at=existing["created_at"].isoformat() if existing["created_at"] else None,
+                    updated_at=existing["updated_at"].isoformat() if existing["updated_at"] else None,
+                    created_date=existing["created_date"].isoformat() if existing["created_date"] else None,
+                    uploaded=True,
+                    filename=os.path.basename(existing["image_path"]) if existing["image_path"] else None,
+                    emp_id=existing["emp_id"]
+                ))
             else:
                 response_data.append(build_empty_image_response(tank_number, image_type))
         else:
             for type_slug in IMAGE_TYPES.keys():
-                existing = next((r for r in db_records if r.image_type == type_slug), None)
+                existing = next((r for r in results if r["image_type"] == type_slug), None)
                 if existing:
-                    response_data.append(build_image_response(existing))
+                    response_data.append(TankImageDataSchema(
+                        id=existing["id"],
+                        tank_number=existing["tank_number"],
+                        image_type=existing["image_type"],
+                        image_label=get_image_label(existing["image_type"]),
+                        image_path=existing["image_path"],
+                        created_at=existing["created_at"].isoformat() if existing["created_at"] else None,
+                        updated_at=existing["updated_at"].isoformat() if existing["updated_at"] else None,
+                        created_date=existing["created_date"].isoformat() if existing["created_date"] else None,
+                        uploaded=True,
+                        filename=os.path.basename(existing["image_path"]) if existing["image_path"] else None,
+                        emp_id=existing["emp_id"]
+                    ))
                 else:
                     response_data.append(build_empty_image_response(tank_number, type_slug))
         
@@ -376,13 +335,13 @@ def delete_image(
                 detail="Invalid date format. Use YYYY-MM-DD"
             )
         
-        record = db.query(TankImages).filter(
-            and_(
-                TankImages.tank_number == tank_number,
-                TankImages.image_type == image_type,
-                TankImages.created_date == delete_date
-            )
-        ).first()
+        # Check if record exists
+        results = db.execute(
+            text("CALL sp_GetTankImages_V2(:tank_number, :image_type)"),
+            {"tank_number": tank_number, "image_type": image_type}
+        ).mappings().fetchall()
+        
+        record = next((r for r in results if r["created_date"] == delete_date), None)
         
         if not record:
             raise HTTPException(
@@ -390,11 +349,14 @@ def delete_image(
                 detail=f"Image not found for tank '{tank_number}', type '{image_type}' on {date_str}"
             )
         
-        # Delete file from disk (and clean folder if empty)
-        if record.image_path:
-            delete_file_if_exists(UPLOAD_ROOT, record.image_path)
+        # Delete file from disk
+        if record["image_path"]:
+            delete_file_if_exists(UPLOAD_ROOT, record["image_path"])
         
-        db.delete(record)
+        db.execute(
+            text("CALL sp_DeleteTankImage_V2(:tank_number, :image_type, :date)"),
+            {"tank_number": tank_number, "image_type": image_type, "date": delete_date}
+        )
         db.commit()
         
         return DeleteResponseSchema(
@@ -423,25 +385,34 @@ def delete_tank_images(
     try:
         validate_tank(tank_number, db)
         
-        query = db.query(TankImages).filter(TankImages.tank_number == tank_number)
-        
+        delete_date = None
         if date_str:
             try:
                 delete_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                query = query.filter(TankImages.created_date == delete_date)
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid date format. Use YYYY-MM-DD"
                 )
         
-        records = query.all()
-        deleted_count = 0
+        # Fetch records to delete files
+        results = db.execute(
+            text("CALL sp_GetTankImages_V2(:tank_number, :image_type)"),
+            {"tank_number": tank_number, "image_type": ""}
+        ).mappings().fetchall()
         
-        for record in records:
-            if record.image_path:
-                delete_file_if_exists(UPLOAD_ROOT, record.image_path)
-            db.delete(record)
+        deleted_count = 0
+        for record in results:
+            if delete_date and record["created_date"] != delete_date:
+                continue
+                
+            if record["image_path"]:
+                delete_file_if_exists(UPLOAD_ROOT, record["image_path"])
+            
+            db.execute(
+                text("CALL sp_DeleteTankImage_V2(:tank_number, :image_type, :date)"),
+                {"tank_number": tank_number, "image_type": record["image_type"], "date": record["created_date"]}
+            )
             deleted_count += 1
         
         db.commit()
@@ -459,4 +430,4 @@ def delete_tank_images(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error deleting images"
-        )
+        )

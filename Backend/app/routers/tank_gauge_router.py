@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.inspection_gauge_model import InspectionGauge
 from typing import List, Optional
@@ -56,17 +57,16 @@ STATUS_MAP = {
 # 1) GET /tank/{tank_id}
 @router.get("/tank/{tank_id}")
 def get_gauges(tank_id: int, db: Session = Depends(get_db)):
-    gauges = db.query(InspectionGauge).filter(InspectionGauge.tank_id == tank_id).all()
-    # Map DB 'features' to JSON 'feature'
+    results = db.execute(text("CALL sp_GetInspectionGaugesByTank(:tank_id)"), {"tank_id": tank_id}).mappings().fetchall()
     return {
         "tank_id": tank_id,
         "gauges": [
             {
-                "id": v.id,
-                "feature": v.features,
-                "status_id": v.status_id,
+                "id": v["id"],
+                "feature": v["features"],
+                "status_id": v["status_id"],
             }
-            for v in gauges
+            for v in results
         ]
     }
 
@@ -82,19 +82,20 @@ def create_gauges(
     
     for item in data.gauges:
         status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
-        new_gauge = InspectionGauge(
-            tank_id=data.tank_id,
-            features=item.feature, # Map JSON 'feature' to DB 'features'
-            status_id=item.status_id,
-            status=status_str,
-            created_by=user_id,
-            modified_by=user_id
-        )
-        db.add(new_gauge)
-        db.flush()
+        result = db.execute(
+            text("CALL sp_UpsertInspectionGauge(:id, :tank_id, :feature, :status_id, :status, :eid)"),
+            {
+                "id": None,
+                "tank_id": data.tank_id,
+                "feature": item.feature,
+                "status_id": item.status_id,
+                "status": status_str,
+                "eid": user_id
+            }
+        ).mappings().first()
         
         resp_item = item.dict()
-        resp_item['id'] = new_gauge.id
+        resp_item['id'] = result['id']
         resp_item['status'] = status_str
         response_gauges.append(resp_item)
     
@@ -113,40 +114,36 @@ def update_gauges(
     authorization: Optional[str] = Header(None)
 ):
     user_id = get_user_id(authorization)
-    existing = db.query(InspectionGauge).filter(InspectionGauge.tank_id == data.tank_id).all()
-    existing_id_map = {v.id: v for v in existing if v.id is not None}
-    existing_name_map = {v.features: v for v in existing}
+    existing_results = db.execute(text("CALL sp_GetInspectionGaugesByTank(:tank_id)"), {"tank_id": data.tank_id}).mappings().fetchall()
+    
+    existing_id_map = {v["id"]: v for v in existing_results if v["id"] is not None}
+    existing_name_map = {v["features"]: v for v in existing_results}
     
     response_gauges = []
     
     for item in data.gauges:
         status_str = STATUS_MAP.get(item.status_id, "UNKNOWN")
-        record = None
+        record_id = None
 
         if item.id and item.id in existing_id_map:
-            record = existing_id_map[item.id]
+            record_id = item.id
         elif item.feature in existing_name_map:
-            record = existing_name_map[item.feature]
-        
-        if record:
-            record.features = item.feature
-            record.status_id = item.status_id
-            record.status = status_str
-            record.modified_by = user_id
-        else:
-            record = InspectionGauge(
-                tank_id=data.tank_id,
-                features=item.feature,
-                status_id=item.status_id,
-                status=status_str,
-                created_by=user_id,
-                modified_by=user_id
-            )
-            db.add(record)
+            record_id = existing_name_map[item.feature]["id"]
+
+        result = db.execute(
+            text("CALL sp_UpsertInspectionGauge(:id, :tank_id, :feature, :status_id, :status, :eid)"),
+            {
+                "id": record_id,
+                "tank_id": data.tank_id,
+                "feature": item.feature,
+                "status_id": item.status_id,
+                "status": status_str,
+                "eid": user_id
+            }
+        ).mappings().first()
             
-        db.flush()
         resp_item = item.dict()
-        resp_item['id'] = record.id
+        resp_item['id'] = result['id']
         resp_item['status'] = status_str
         response_gauges.append(resp_item)
 

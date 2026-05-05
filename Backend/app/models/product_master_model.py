@@ -8,4 +8,5 @@ class ProductMaster(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     product_name = Column(String(150), nullable=False, unique=True)
     description = Column(Text, nullable=True)
+    un_code_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=func.now())

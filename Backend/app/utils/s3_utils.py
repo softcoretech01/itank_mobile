@@ -64,6 +64,10 @@ def get_presigned_url(key: str, expiration=3600) -> str:
         return key
 
 def to_cdn_url(key: str) -> str:
+    if not key:
+        return key
     if CLOUDFRONT_BASE_URL:
+        if key.startswith(CLOUDFRONT_BASE_URL):
+            return key
         return f"{CLOUDFRONT_BASE_URL}/{key.lstrip('/')}"
     return get_presigned_url(key)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, SmallInteger, String, TIMESTAMP, func, ForeignKey
+from sqlalchemy import Column, Integer, SmallInteger, String, TIMESTAMP, func, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -23,21 +23,32 @@ class TankCertificate(Base):
 
     certificate_number = Column(String(255), nullable=False, unique=True)
 
-    # --- PDF upload paths ---
-    periodic_inspection_pdf_path = Column(String(255), nullable=True)
-    periodic_inspection_pdf_name = Column(String(255), nullable=True)
+    # --- certificate upload paths (6 inputs) ---
+    initial_certificate_path = Column(String(255), nullable=True)
+    initial_certificate_name = Column(String(255), nullable=True)
 
-    next_insp_pdf_path = Column(String(255), nullable=True)
-    next_insp_pdf_name = Column(String(255), nullable=True)
+    certificate1_path = Column(String(255), nullable=True)
+    certificate1_name = Column(String(255), nullable=True)
 
-    new_certificate_file = Column(String(255), nullable=True)
-    new_certificate_file_name = Column(String(255), nullable=True)
+    certificate2_path = Column(String(255), nullable=True)
+    certificate2_name = Column(String(255), nullable=True)
 
-    old_certificate_file = Column(String(255), nullable=True)
-    old_certificate_file_name = Column(String(255), nullable=True)
+    certificate3_path = Column(String(255), nullable=True)
+    certificate3_name = Column(String(255), nullable=True)
+
+    certificate4_path = Column(String(255), nullable=True)
+    certificate4_name = Column(String(255), nullable=True)
+
+    certificate5_path = Column(String(255), nullable=True)
+    certificate5_name = Column(String(255), nullable=True)
 
     # 1 = Active, 0 = Inactive
     status = Column(SmallInteger, nullable=False, default=1, server_default="1")
+
+    # archives: increments each time an old cert is pushed to the archive pool
+    archives = Column(Integer, nullable=False, default=0, server_default="0")
+
+    remarks = Column(String(30), nullable=True)
 
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)

@@ -84,31 +84,24 @@ def register_user(body: RegisterRequest):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT 1 FROM users WHERE login_name=%s", (body.login_name,))
-            if cursor.fetchone():
-                return JSONResponse(status_code=409, content={"success": False, "message": "Login name already exists"})
-
-            # Check if role_id exists in role_master
-            cursor.execute("SELECT 1 FROM role_master WHERE role_id=%s", (body.role_id,))
-            if not cursor.fetchone():
-                return JSONResponse(status_code=400, content={"success": False, "message": "No such role present"})
-
-            cursor.execute("SELECT COALESCE(MAX(emp_id),1000)+1 AS eid FROM users")
-            emp_id = cursor.fetchone()["eid"]
-
+            # Using stored procedure for registration
+            # sp_RegisterUser handles login_name check, role check, emp_id generation and insertion
             pwd_hash, salt = hash_password(body.password)
-
-            cursor.execute("""
-                INSERT INTO users (emp_id,name,department,designation,hod,supervisor,
-                email,login_name,password_hash,password_salt,role_id)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (
-                emp_id, body.name, body.department, body.designation,
-                body.hod, body.supervisor, body.email, body.login_name,
-                pwd_hash, salt, body.role_id
-            ))
-            conn.commit()
-            return {"success": True, "message": "User registered"}
+            try:
+                cursor.callproc("sp_RegisterUser", (
+                    body.name, body.department, body.designation,
+                    body.hod, body.supervisor, body.email, body.login_name,
+                    pwd_hash, salt, body.role_id
+                ))
+                conn.commit()
+                return {"success": True, "message": "User registered"}
+            except Exception as e:
+                error_msg = str(e)
+                if "already exists" in error_msg:
+                    return JSONResponse(status_code=409, content={"success": False, "message": error_msg})
+                if "No such role" in error_msg:
+                    return JSONResponse(status_code=400, content={"success": False, "message": error_msg})
+                raise e
     finally:
         conn.close()
 
@@ -120,7 +113,8 @@ def login_user(body: LoginRequest):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM users WHERE BINARY login_name=%s", (body.login_name,))
+            # Fetch user details using stored procedure
+            cursor.callproc("sp_GetUserDetails", (body.login_name,))
             user = cursor.fetchone()
 
             if not user:
@@ -133,34 +127,12 @@ def login_user(body: LoginRequest):
             emp_id = user["emp_id"]
             role_id = user["role_id"]
 
-            # Fetch web access permissions
-            cursor.execute("""
-                SELECT screen, edit_only, read_only
-                FROM role_rights
-                WHERE user_role_id = %s AND module_access = 'Web Application'
-                AND (edit_only = 1 OR read_only = 1)
-            """, (role_id,))
+            # Fetch web access permissions using stored procedure
+            cursor.callproc("sp_GetUserRights", (role_id,))
             web_access = cursor.fetchall()
 
-            # 🔑 FORCE LOGOUT ALL PREVIOUS SESSIONS
-            cursor.execute("UPDATE login_sessions SET still_logged_in=0 WHERE emp_id=%s", (emp_id,))
-
-            # ✅ CREATE CLEAN SESSION
-            cursor.execute("""
-                INSERT INTO login_sessions (
-                    emp_id, email, login_name, logged_in_at, still_logged_in
-                )   
-                VALUES (%s, %s, %s, %s, 1)
-                ON DUPLICATE KEY UPDATE
-                    still_logged_in = 1,
-                    logged_in_at = VALUES(logged_in_at)
-            """, (
-                emp_id,
-                user["email"],
-                user["login_name"],
-                datetime.utcnow()
-            ))
-
+            # Manage session (force logout previous and create new) using stored procedure
+            cursor.callproc("sp_ManageLoginSession", (emp_id, user["email"], user["login_name"]))
 
             token = create_jwt_token({
                 "emp_id": emp_id,
@@ -169,7 +141,7 @@ def login_user(body: LoginRequest):
             })
 
             conn.commit()
-            return {"success": True, "message": "Login successful", "data": {"token": token, "role_id": role_id, "web_access": web_access}}
+            return {"success": True, "message": "Login successful", "data": {"token": token, "role_id": role_id, "web_access": web_access, "emp_id": emp_id, "login_name": user["login_name"]}}
 
     except Exception as e:
         conn.rollback()
@@ -199,7 +171,8 @@ def logout_user(authorization: Optional[str] = Header(None), body: Optional[Logo
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE login_sessions SET still_logged_in=0 WHERE emp_id=%s", (emp_id,))
+            # Use stored procedure for logout
+            cursor.callproc("sp_LogoutUser", (emp_id,))
             conn.commit()
             return {"success": True}
     finally:
@@ -214,9 +187,11 @@ def change_password(body: ChangePasswordRequest, authorization: str = Header(...
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT 1 FROM login_sessions WHERE emp_id=%s AND still_logged_in=1
-            """, (emp_id,))
+            # Check session and get user details using SP if needed, 
+            # but here we can just reuse sp_GetUserDetails by login_name if we had it,
+            # but we have emp_id. Let's just use sp_GetUserDetails for now if we can 
+            # or just call a direct check.
+            cursor.execute("SELECT 1 FROM login_sessions WHERE emp_id=%s AND still_logged_in=1", (emp_id,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=401, detail="Session expired")
 
@@ -228,9 +203,8 @@ def change_password(body: ChangePasswordRequest, authorization: str = Header(...
                 return JSONResponse(status_code=400, content={"success": False, "message": "Wrong password"})
 
             new_hash, new_salt = hash_password(body.new_password)
-            cursor.execute("""
-                UPDATE users SET password_hash=%s,password_salt=%s WHERE emp_id=%s
-            """, (new_hash, new_salt, emp_id))
+            # Use stored procedure for password update
+            cursor.callproc("sp_ChangePassword", (emp_id, new_hash, new_salt))
             conn.commit()
             return {"success": True, "message": "Password updated"}
     finally:
@@ -244,7 +218,8 @@ def get_operators():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT emp_id,name FROM users WHERE role='operator'")
+            # Use stored procedure for getting operators
+            cursor.callproc("sp_GetOperators")
             return {"success": True, "data": cursor.fetchall()}
     finally:
         conn.close()

@@ -1,16 +1,13 @@
 import os
 from io import BytesIO
 from datetime import datetime, date
-
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.dml.color import RGBColor
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import requests 
-# --- MODEL IMPORTS ---
 from app.models.tank_header import Tank
 from app.models.tank_details import TankDetails
 from app.models.tank_images_model import TankImages
@@ -26,8 +23,9 @@ from app.models.product_master_model import ProductMaster
 from app.models.safety_valve_brand_model import SafetyValveBrand
 from app.models.inspection_valve_model import InspectionValve
 from app.models.inspection_gauge_model import InspectionGauge
-from app.models.tank_valve_and_shell_model import TankValveAndShell
+from app.models.tank_frame_outer_model import TankFrameOuter
 from app.models.other_images_model import TankOtherImage
+from app.models.pv_code_master_model import PVCodeMaster
 from pathlib import Path
 from app.utils.s3_utils import to_cdn_url, s3_client, AWS_S3_BUCKET
 # ---------------------------------------------------------------------------
@@ -1085,12 +1083,19 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
         .all()
     )
     certs = db.query(TankCertificate).filter(TankCertificate.tank_id == tank_id).order_by(TankCertificate.created_at.desc()).all()
-    drawings = db.query(TankDrawing).filter(TankDrawing.tank_id == tank_id).all()
+    drawings = []
+    if d and d.pid_id:
+        dwg = db.query(TankDrawing).filter(TankDrawing.id == d.pid_id).first()
+        if dwg:
+            drawings.append(dwg)
+            
     valves = db.query(ValveTestReport).filter(ValveTestReport.tank_id == tank_id).all()
     
     # New Image Data Sources
-    # New Image Data Sources
-    valve_and_shell_record = db.query(TankValveAndShell).filter(TankValveAndShell.tank_id == tank_id).first()
+    tank_frame_outer_record = None
+    if d and d.ga_id:
+        tank_frame_outer_record = db.query(TankFrameOuter).filter(TankFrameOuter.id == d.ga_id).first()
+    
     others_rows = db.query(TankOtherImage).filter(TankOtherImage.tank_id == d.id).all()
     
     # Checklist Data
@@ -1302,9 +1307,8 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
         p_val.font.color.rgb = RGBColor(0, 0, 0)
 
     # -------------------------------
-    # Resolve Product & Safety Valve
+    # Resolve Safety Valve
     # -------------------------------
-    product_name = resolve_product_name(db, insp, d, cargos)
     safety_valve_name = resolve_safety_valve_name(db, insp, d)
 
     # Convert dates
@@ -1367,19 +1371,25 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
 
     # Row 9
     set_cell(9, 0, "Net Kg", format_value(d.mpl_kg))
-    set_cell(9, 2, "Product - Last", product_name)
+    check_date = tank.created_at.strftime("%d-%m-%y") if tank.created_at else "-"
+    set_cell(9, 2, "Check By / Date", f"{d.created_by or '-'} / {check_date}")
 
     # Row 10
     set_cell(10, 0, "Capacity Liter", format_value(d.capacity_l))
-    check_date = tank.created_at.strftime("%d-%m-%y") if tank.created_at else "-"
-    set_cell(10, 2, "Check By / Date", f"{d.created_by or '-'} / {check_date}")
+    appr_date = tank.updated_at.strftime("%d-%m-%y") if tank.updated_at else "-"
+    set_cell(10, 2, "Approved By / Date", f"{d.updated_by or '-'} / {appr_date}")
 
     # Row 11
     set_cell(11, 0, "Pump Type", format_value(d.pump_type))
-    # Approved by - User wants this field.
-    # We can try updated_by
-    appr_date = tank.updated_at.strftime("%d-%m-%y") if tank.updated_at else "-"
-    set_cell(11, 2, "Approved By / Date", f"{d.updated_by or '-'} / {appr_date}")
+    
+    # PV Code Logic
+    pv_code_name = "-"
+    if d.pv_id:
+        pv_row = db.query(PVCodeMaster).filter(PVCodeMaster.id == d.pv_id).first()
+        if pv_row:
+            pv_code_name = pv_row.pv_name
+    set_cell(11, 2, "PV Code", pv_code_name)
+    
 
     # Row 12 - Applicable Regulation (Merged)
     reg_names = [r.regulation_name for r in regs if r.regulation_name]
@@ -1597,24 +1607,36 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
 
     # 4. Add valve label images
     # 4 & 5. Add valve label & frame images
-    if valve_and_shell_record:
-        # Valve Label
-        if valve_and_shell_record.valve_label_image_path:
-            key = get_image_key(valve_and_shell_record.valve_label_image_path, tank.tank_number, base_dir)
+    if tank_frame_outer_record:
+        # GA Drawing
+        if tank_frame_outer_record.ga_image_path:
+            key = get_image_key(tank_frame_outer_record.ga_image_path, tank.tank_number, base_dir)
             seen_paths.add(key)
-            resolved = resolve_path(valve_and_shell_record.valve_label_image_path, tank.tank_number, base_dir)
+            resolved = resolve_path(tank_frame_outer_record.ga_image_path, tank.tank_number, base_dir)
             if resolved:
                 resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
                 seen_paths.add(resolved_key)
 
-        # Frame
-        if valve_and_shell_record.tank_frame_image_path:
-            key = get_image_key(valve_and_shell_record.tank_frame_image_path, tank.tank_number, base_dir)
+        # Image 2
+        if tank_frame_outer_record.image2_image_path:
+            key = get_image_key(tank_frame_outer_record.image2_image_path, tank.tank_number, base_dir)
             seen_paths.add(key)
-            resolved = resolve_path(valve_and_shell_record.tank_frame_image_path, tank.tank_number, base_dir)
+            resolved = resolve_path(tank_frame_outer_record.image2_image_path, tank.tank_number, base_dir)
             if resolved:
                 resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
                 seen_paths.add(resolved_key)
+
+        # Extra Valve & Shell images (3-6)
+        for i in range(3, 7):
+            fld = f"img{i}_path"
+            val = getattr(tank_frame_outer_record, fld, None)
+            if val:
+                key = get_image_key(val, tank.tank_number, base_dir)
+                seen_paths.add(key)
+                resolved = resolve_path(val, tank.tank_number, base_dir)
+                if resolved:
+                    resolved_key = get_image_key(resolved, tank.tank_number, base_dir)
+                    seen_paths.add(resolved_key)
 
     # 6. Add other images
     for ot in others_rows:
@@ -1632,49 +1654,76 @@ def create_presentation(db: Session, tank_id: int, base_dir: str | None = None, 
 
 
 
-    # --- SLIDE 15: Tank Valve Label (Full Page) ---
-    if valve_and_shell_record and valve_and_shell_record.valve_label_image_path:
-        curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            "Tank Valve Label",                    # Slide Title
-            "Tank Operation Valve Tag / Label",      # Top Bar
-            "Tank Operation Valve Tag / Label",      # Bottom Bar
-            valve_and_shell_record.valve_label_image_path, base_dir, exclude_paths=slides_12_18_seen
-        )
-
-    
-    # --- SLIDE 17 (Dynamic): P&ID and GA Drawings ---
+    # --- GROUP 1: Tank Drawings (P&ID, GA, and Images 3-6) ---
     if drawings:
         dwg = drawings[0]
-        # P&ID Drawing Slide
+        # 1. P&ID Drawing
         if hasattr(dwg, "pid_drawing") and dwg.pid_drawing:
              curr_page = add_full_page_image_slide(
                 prs, tank.tank_number, report_no, curr_page,
-                "Tank P&ID",                           # Slide Title
-                "P&ID",                                # Top Bar
-                dwg.pid_reference or "",               # Bottom Bar
+                "P&ID Drawings",                       # Slide Title
+                "P&ID Drawings",                       # Top Bar
+                f"P&ID Reference: {dwg.pid_reference or '-'}",  # Bottom Bar
                 dwg.pid_drawing, base_dir, exclude_paths=slides_12_18_seen
             )
         
-        # GA Drawing Slide
-        if hasattr(dwg, "ga_drawing_file") and dwg.ga_drawing_file:
+        # 2. Image 2 Drawing
+        if hasattr(dwg, "image2_drawing_file") and dwg.image2_drawing_file:
              curr_page = add_full_page_image_slide(
                 prs, tank.tank_number, report_no, curr_page,
-                "Tank GA Drawing",                     # Slide Title
-                "General Arrangement",                 # Top Bar
-                dwg.ga_drawing or "",                  # Bottom Bar
-                dwg.ga_drawing_file, base_dir, exclude_paths=slides_12_18_seen
+                "P&ID Drawings",                       # Slide Title
+                "Image 2",                             # Top Bar
+                "",                                    # Bottom Bar
+                dwg.image2_drawing_file, base_dir, exclude_paths=slides_12_18_seen
             )
 
-    # --- SLIDE 18: Tank Frame & Outer Shell (Full Page) ---
-    if valve_and_shell_record and valve_and_shell_record.tank_frame_image_path:
-        curr_page = add_full_page_image_slide(
-            prs, tank.tank_number, report_no, curr_page,
-            "Tank Frame & Outer Shell",            # Slide Title
-            "",                                    # Top Bar (Reference has none/embedded)
-            "",                                    # Bottom Bar (Reference has none/embedded)
-            valve_and_shell_record.tank_frame_image_path, base_dir, exclude_paths=slides_12_18_seen
-        )
+        # 3. Extra Drawings Images (3-6)
+        for i in range(3, 7):
+            fld = f"img{i}"
+            img_path = getattr(dwg, fld, None)
+            if img_path:
+                curr_page = add_full_page_image_slide(
+                    prs, tank.tank_number, report_no, curr_page,
+                    "P&ID Drawings",                       # Slide Title
+                    f"Drawing Image {i}",                  # Top Bar
+                    "",                                    # Bottom Bar
+                    img_path, base_dir, exclude_paths=slides_12_18_seen
+                )
+
+    # --- GROUP 2: Valve & Shell (Valve Label, Frame, and Images 3-6) ---
+    if tank_frame_outer_record:
+        # 1. GA Drawing
+        if tank_frame_outer_record.ga_image_path:
+            curr_page = add_full_page_image_slide(
+                prs, tank.tank_number, report_no, curr_page,
+                "Tank Frame & Outer Shell",                           # Slide Title
+                "Tank Frame & Outer Shell",                           # Top Bar
+                f"GA Reference: {tank_frame_outer_record.ga_reference or '-'}", # Bottom Bar
+                tank_frame_outer_record.ga_image_path, base_dir, exclude_paths=slides_12_18_seen
+            )
+
+        # 2. Image 2
+        if tank_frame_outer_record.image2_image_path:
+            curr_page = add_full_page_image_slide(
+                prs, tank.tank_number, report_no, curr_page,
+                "Tank Frame & Outer Shell",                         # Slide Title
+                "Image 2",                             # Top Bar
+                "",                                    # Bottom Bar
+                tank_frame_outer_record.image2_image_path, base_dir, exclude_paths=slides_12_18_seen
+            )
+
+        # 3. Extra Valve & Shell Images (3-6)
+        for i in range(3, 7):
+            fld = f"img{i}_path"
+            img_path = getattr(tank_frame_outer_record, fld, None)
+            if img_path:
+                curr_page = add_full_page_image_slide(
+                    prs, tank.tank_number, report_no, curr_page,
+                    "Tank Frame & Outer Shell",                         # Slide Title
+                    f"Image {i}",            # Top Bar
+                    "",                                    # Bottom Bar
+                    img_path, base_dir, exclude_paths=slides_12_18_seen
+                )
 
     # --- LAST SLIDE (Contact Sheet) REMOVED ---
 

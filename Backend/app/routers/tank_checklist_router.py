@@ -9,36 +9,12 @@ router = APIRouter(prefix="/api/tank_checkpoints", tags=["Checkpoints"])
 @router.get("/export/checklist")
 def get_checklist_template(db: Session = Depends(get_db)):
     try:
-        # ---------------------------------------------------------
-        # SQL: Select using actual DB column names with aliases
-        # - inspection_job table uses 'id' as primary key (aliased as job_id)
-        # - inspection_job table uses 'job_description' for title (aliased as job_name)
-        # - inspection_sub_job table uses 'sub_job_id' as primary key
-        # - inspection_sub_job table uses 'sub_job_description' for title (aliased as sub_job_name)
-        # - inspection_sub_job table uses 'sn' for serial number
-        # ---------------------------------------------------------
-        query = """
-            SELECT 
-                j.id AS job_id, 
-                j.job_description AS job_name, 
-                j.sort_order AS job_sort_order,
-                s.sub_job_id AS sub_job_id, 
-                s.sub_job_name AS sub_job_name,
-                s.sn AS sub_job_sn
-            FROM inspection_job j
-            LEFT JOIN inspection_sub_job s ON j.id = s.job_id
-            ORDER BY j.sort_order ASC, s.sub_job_id ASC
-        """
-        
-        results = db.execute(text(query)).fetchall()
+        results = db.execute(text("CALL sp_GetChecklistTemplate()")).mappings().fetchall()
 
         sections_map = {}
 
-        for row in results:
-            # Convert row to dictionary
-            r = dict(row._mapping) if hasattr(row, "_mapping") else dict(zip(row.keys(), row))
-            
-            # Now r['job_id'] works because we aliased j.id as job_id
+        for r in results:
+            # Now r['job_id'] works because of mappings()
             jid = str(r['job_id'])
             
             # 1. Create Section (With job_id included)
@@ -46,7 +22,7 @@ def get_checklist_template(db: Session = Depends(get_db)):
                 sections_map[jid] = {
                     "sn": jid,               
                     "job_id": jid,           
-                    "title": r['job_name'] or "",  # Use job_name (aliased from job_description)
+                    "title": r['job_name'] or "", 
                     "items": []
                 }
             
@@ -71,4 +47,4 @@ def get_checklist_template(db: Session = Depends(get_db)):
         return success_resp("Checklist exported successfully", response_data, 200)
 
     except Exception as e:
-        return error_resp(f"Error fetching checklist: {str(e)}", 500)
+        return error_resp(f"Error fetching checklist: {str(e)}", 500)

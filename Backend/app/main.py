@@ -26,7 +26,7 @@ from app.routers import (
     tank_image_router, tank_inspection_router, auth_router,
     validation_router, to_do_list_router, tank_checklist_router,
     tank_valve_router, tank_gauge_router,
-    tank_valve_and_shell_router, other_images_router,
+    tank_frame_outer_router, other_images_router,
     tank_code_master_router
 )
 from app.routers.tank_checkpoints_router import router as tank_checkpoints_router
@@ -74,7 +74,7 @@ class UniformResponseMiddleware(BaseHTTPMiddleware):
 
             # Don't wrap docs, openapi, static files, uploads, or streaming responses
             path = request.url.path
-            if path.startswith("/docs") or path.startswith("/redoc") or path.startswith("/openapi") or path.startswith("/static") or path.startswith("/uploads"):
+            if any(p in path for p in ["/docs", "/redoc", "/openapi", "/static", "/uploads"]):
                 return response
 
             # Skip wrapping for streaming or file responses
@@ -150,7 +150,7 @@ app.include_router(cargo_tank.router, prefix="/api/cargo-tank", tags=["Cargo Tan
 app.include_router(tank_drawings.router, prefix="/api/tank-drawings", tags=["Tank Drawings"])
 app.include_router(tank_valve_router.router, prefix="/api/tank-valves", tags=["Tank Valves"])
 app.include_router(tank_gauge_router.router, prefix="/api/tank-gauges", tags=["Tank Gauges"])
-app.include_router(tank_valve_and_shell_router.router, prefix="/api/tank-valve-and-shell", tags=["Tank Valve And Shell"])
+app.include_router(tank_frame_outer_router.router, prefix="/api/tank-frame-outer", tags=["Tank Frame Outer Shell"])
 app.include_router(other_images_router.router, prefix="/api/other-images", tags=["Other Images"])
 app.include_router(valve_test_report.router, prefix="/api/valve-test-reports", tags=["Valve Test Reports"])
 app.include_router(ppt_router.router, prefix="/api/ppt", tags=["PPT Generation"])

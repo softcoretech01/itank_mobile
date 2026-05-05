@@ -46,6 +46,7 @@ class InspectionHistory(Base):
     is_submitted = Column(Integer, nullable=False, default=0)
     is_reviewed = Column(Integer, nullable=False, default=0)
     reviewed_by = Column(Integer, nullable=True)
+    web_submitted = Column(Integer, nullable=False, default=0)
     created_by = Column(String(100))
     updated_by = Column(String(100))
     history_date = Column(DateTime, nullable=False, default=func.now())

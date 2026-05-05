@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.valve_test_report import ValveTestReport 
 from app.models.tank_header import Tank
@@ -19,6 +20,7 @@ except Exception:
 
 # Import shared utility functions
 from app.utils.upload_utils import save_uploaded_file, delete_file_if_exists
+from app.utils.s3_utils import to_cdn_url
 from datetime import datetime
 
 def parse_test_date(date_str: Optional[str]) -> Optional[date_type]:
@@ -66,6 +68,37 @@ VALVE_REPORT_TYPE = "valve_reports"
 
 def clean_form_data(value: Optional[str]):
     return value.strip() if value else None
+
+# --- HELPER: Serialize Object ---
+def serialize_valve_report(record):
+    if not record:
+        return None
+    
+    # Support both SQLAlchemy Row objects (dot notation) and RowMapping/dict objects (bracket notation)
+    def get_val(obj, key, default=None):
+        if hasattr(obj, key):
+            return getattr(obj, key)
+        try:
+            return obj[key]
+        except (KeyError, TypeError):
+            return default
+
+    path = get_val(record, "inspection_report_file")
+    url = to_cdn_url(path) if path else ""
+    
+    return {
+        "id": get_val(record, "id"),
+        "tank_id": get_val(record, "tank_id"),
+        "test_date": get_val(record, "test_date").isoformat() if get_val(record, "test_date") else None,
+        "inspected_by": get_val(record, "inspected_by"),
+        "remarks": get_val(record, "remarks"),
+        "inspection_report_file": path,
+        "inspection_report_url": url,
+        "created_by": get_val(record, "created_by"),
+        "updated_by": get_val(record, "updated_by"),
+        "created_at": get_val(record, "created_at").isoformat() if get_val(record, "created_at") else None,
+        "updated_at": get_val(record, "updated_at").isoformat() if get_val(record, "updated_at") else None,
+    }
 from fastapi import HTTPException
 # TODO: change this to your actual JWT decode util
 def get_emp_id_from_token(
@@ -153,13 +186,12 @@ def create_valve_test_report(
     db: Session = Depends(get_db),
     authorization: str = Header(...)
 ):
-
     # 1. Fetch Tank to get tank_number
-    tank_record = db.query(Tank).filter(Tank.id == tank_id).first()
+    tank_record = db.execute(text("SELECT tank_number FROM tank_header WHERE id = :id"), {"id": tank_id}).mappings().first()
     if not tank_record:
         raise HTTPException(status_code=404, detail="Tank not found")
     
-    tank_number = tank_record.tank_number
+    tank_number = tank_record["tank_number"]
 
     # 2. Save File
     file_path_db = None
@@ -175,41 +207,38 @@ def create_valve_test_report(
             raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
     parsed_date = parse_test_date(test_date)
-
-        # Get emp_id of logged-in user from token
     emp_id = get_emp_id_from_token(authorization)
-    try:
-        new_report = ValveTestReport(
-            tank_id=tank_id,
-            test_date=parsed_date,
-            inspected_by=clean_form_data(inspected_by),
-            remarks=clean_form_data(remarks),
-            inspection_report_file=file_path_db,
-            created_by=emp_id
-        )
 
-        db.add(new_report)
+    try:
+        result = db.execute(
+            text("CALL sp_CreateValveTestReport(:tank_id, :test_date, :inspected_by, :remarks, :file_path, :created_by)"),
+            {
+                "tank_id": tank_id,
+                "test_date": parsed_date,
+                "inspected_by": clean_form_data(inspected_by),
+                "remarks": clean_form_data(remarks),
+                "file_path": file_path_db,
+                "created_by": emp_id
+            }
+        ).mappings().first()
         db.commit()
-        db.refresh(new_report)
     except Exception as e:
         db.rollback()
-        # Cleanup file if DB insertion fails
         if file_path_db:
             delete_file_if_exists(UPLOAD_ROOT, file_path_db)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-    return {"message": "Report created successfully", "data": new_report}
+    return {"message": "Report created successfully", "data": serialize_valve_report(result)}
 
 # --- READ BY TANK ID ---
 @router.get("/tank/{tank_id}")
 def get_valve_reports_by_tank(tank_id: int, db: Session = Depends(get_db)):
-    reports = db.query(ValveTestReport).filter(ValveTestReport.tank_id == tank_id).order_by(ValveTestReport.created_at.desc()).all()
-    return reports
+    reports = db.execute(text("CALL sp_GetValveReportsByTank(:tank_id)"), {"tank_id": tank_id}).mappings().fetchall()
+    return [serialize_valve_report(r) for r in reports]
 
 # --- UPDATE ---
 
 @router.put("/{report_id}")
-
 def update_valve_test_report(
     report_id: int,
     test_date: Optional[str] = Form(None),
@@ -219,68 +248,67 @@ def update_valve_test_report(
     db: Session = Depends(get_db),
     authorization: str = Header(...)
 ):
-        # Get emp_id of logged-in user from token
     emp_id = get_emp_id_from_token(authorization)
-    report = db.query(ValveTestReport).filter(ValveTestReport.id == report_id).first()
+    
+    # Get existing report to check tank_id and current file path
+    report = db.execute(text("SELECT tank_id, inspection_report_file FROM valve_test_report WHERE id = :id"), {"id": report_id}).mappings().first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Fetch Tank Number for file operations
-    tank_record = db.query(Tank).filter(Tank.id == report.tank_id).first()
+    tank_id = report["tank_id"]
+    tank_record = db.execute(text("SELECT tank_number FROM tank_header WHERE id = :id"), {"id": tank_id}).mappings().first()
     if not tank_record:
         raise HTTPException(status_code=404, detail="Associated Tank not found")
     
-    tank_number = tank_record.tank_number
+    tank_number = tank_record["tank_number"]
 
-    # File Update Logic
+    file_path_db = None
     if inspection_report_file:
-        # 1. Delete old file if exists
-        if report.inspection_report_file:
-            delete_file_if_exists(UPLOAD_ROOT, report.inspection_report_file)
+        if report["inspection_report_file"]:
+            delete_file_if_exists(UPLOAD_ROOT, report["inspection_report_file"])
         
-        # 2. Save new file
         try:
-            new_file_path = save_uploaded_file(
+            file_path_db = save_uploaded_file(
                 upload_file=inspection_report_file,
                 tank_number=tank_number,
                 image_type=VALVE_REPORT_TYPE,
                 upload_root=UPLOAD_ROOT
             )
-            report.inspection_report_file = new_file_path
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
-    if test_date is not None:
-        report.test_date = parse_test_date(test_date)
-
-    if inspected_by is not None:
-        report.inspected_by = clean_form_data(inspected_by)
-    if remarks is not None:
-        report.remarks = clean_form_data(remarks)
-
-    report.updated_by = emp_id
+    parsed_date = parse_test_date(test_date) if test_date is not None else None
 
     try:
+        updated = db.execute(
+            text("CALL sp_UpdateValveTestReport(:id, :test_date, :inspected_by, :remarks, :file_path, :updated_by)"),
+            {
+                "id": report_id,
+                "test_date": parsed_date,
+                "inspected_by": clean_form_data(inspected_by),
+                "remarks": clean_form_data(remarks),
+                "file_path": file_path_db,
+                "updated_by": emp_id
+            }
+        ).mappings().first()
         db.commit()
-        db.refresh(report)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database update error: {str(e)}")
 
-    return {"message": "Report updated successfully", "data": report}
+    return {"message": "Report updated successfully", "data": serialize_valve_report(updated)}
 
 # --- DELETE ---
 @router.delete("/{report_id}")
 def delete_valve_test_report(report_id: int, db: Session = Depends(get_db), authorization: str = Header(...)):
     """Deletes a valve test report and its associated file."""
-    report = db.query(ValveTestReport).filter(ValveTestReport.id == report_id).first()
+    report = db.execute(text("SELECT inspection_report_file FROM valve_test_report WHERE id = :id"), {"id": report_id}).mappings().first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Delete associated file and cleanup folders
-    if report.inspection_report_file:
-        delete_file_if_exists(UPLOAD_ROOT, report.inspection_report_file)
+    if report["inspection_report_file"]:
+        delete_file_if_exists(UPLOAD_ROOT, report["inspection_report_file"])
 
-    db.delete(report)
+    db.execute(text("CALL sp_DeleteValveTestReport(:id)"), {"id": report_id})
     db.commit()
     return {"message": "Report deleted successfully"}

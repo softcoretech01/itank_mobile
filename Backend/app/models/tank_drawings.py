@@ -6,26 +6,32 @@ class TankDrawing(Base):
     __tablename__ = "tank_drawings"
 
     id = Column(Integer, primary_key=True, index=True)
-    tank_id = Column(Integer, ForeignKey("tank_header.id", ondelete="CASCADE"), nullable=False)
 
     # Text reference fields
-    pid_reference = Column(String(255), nullable=True)
-    ga_drawing = Column(String(255), nullable=True)
+    pid_reference = Column(String(255), nullable=True, unique=True, index=True)
 
-    # JPEG image uploads: P&ID Drawing and GA Drawing
+    # JPEG image uploads: P&ID Drawing and image2 Drawing
     pid_drawing = Column(String(255), nullable=True)          # stored path/S3 key
     pid_drawing_name = Column(String(255), nullable=True)     # original filename
 
-    ga_drawing_file = Column(String(255), nullable=True)      # stored path/S3 key
-    ga_drawing_file_name = Column(String(255), nullable=True) # original filename
+    image2_drawing_file = Column(String(255), nullable=True)      # stored path/S3 key
+    image2_drawing_file_name = Column(String(255), nullable=True) # original filename
+
+    img3 = Column(String(255), nullable=True)
+    img3_name = Column(String(255), nullable=True)
+    img4 = Column(String(255), nullable=True)
+    img4_name = Column(String(255), nullable=True)
+    img5 = Column(String(255), nullable=True)
+    img5_name = Column(String(255), nullable=True)
+    img6 = Column(String(255), nullable=True)
+    img6_name = Column(String(255), nullable=True)
 
     # 1 = Active, 0 = Inactive
     status = Column(SmallInteger, nullable=False, default=1, server_default="1")
+
+    remarks = Column(String(30), nullable=True)
 
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-
-    from app.models.tank_header import Tank
-    tank = relationship("Tank")

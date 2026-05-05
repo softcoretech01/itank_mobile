@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File,
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Optional, Generator, Any
 from sqlalchemy import func, text, inspect
 from sqlalchemy.orm import Session
@@ -150,43 +150,11 @@ from app.utils.s3_utils import build_s3_key, upload_fileobj_to_s3
 
 def fetch_pi_next_inspection_date(db: Session, tank_number: str):
     try:
-        row = db.execute(
-            text(
-                """
-                SELECT next_insp_date
-                FROM tank_certificate
-                WHERE tank_number = :tank_number
-                ORDER BY next_insp_date IS NULL ASC, next_insp_date DESC
-                LIMIT 1
-                """
-            ),
-            {"tank_number": tank_number},
-        ).fetchone()
-        print(f"Debug: tank_number={tank_number}, row={row}")
+        row = db.execute(text("CALL sp_GetNextInspDate(:tank_number)"), {"tank_number": tank_number}).mappings().first()
         if not row:
-            print("Debug: no row")
             return None
-        try:
-            if hasattr(row, "_mapping"):
-                mapping = row._mapping
-                result = next(iter(mapping.values()), None)
-            elif isinstance(row, dict):
-                result = next(iter(row.values()), None)
-            else:
-                result = row[0]
-            print(f"Debug: result={result}")
-            return result
-        except Exception as e:
-            print(f"Debug: exception in parsing row: {e}")
-            try:
-                result = list(row.values())[0]
-                print(f"Debug: fallback result={result}")
-                return result
-            except Exception as e2:
-                print(f"Debug: fallback exception: {e2}")
-                return None
+        return row.get("next_insp_date")
     except Exception as exc:
-        print(f"Debug: exception in fetch: {exc}")
         logger.warning("Could not fetch PI next inspection date for tank_number %s: %s", tank_number, exc)
         return None
 
@@ -198,18 +166,10 @@ def generate_report_number(db: Session, inspection_date: datetime, inspection_ty
     prefix_part = "SG-T1" # Default
     if inspection_type_id:
         try:
-            it_row = db.execute(text("SELECT inspection_type_name FROM inspection_type WHERE id = :id"), {"id": inspection_type_id}).fetchone()
+            it_row = db.execute(text("CALL sp_GetInspectionTypeName(:id)"), {"id": inspection_type_id}).mappings().first()
             if it_row:
-                # Handle mapping or tuple access
-                if hasattr(it_row, "_mapping"):
-                    itype_name = it_row._mapping.get("inspection_type_name", "").upper()
-                else:
-                    itype_name = it_row[0].upper()
-                
-                # Normalize: remove hyphens and spaces to match user request (e.g. "On-Hire" -> "ONHIRE")
+                itype_name = it_row.get("inspection_type_name", "").upper()
                 normalized_name = itype_name.replace("-", "").replace(" ", "")
-
-                # Check for special types
                 if normalized_name in ["ONHIRE", "OFFHIRE", "CONDITION"]:
                     prefix_part = f"SG-{normalized_name}-T1"
         except Exception as e:
@@ -217,19 +177,8 @@ def generate_report_number(db: Session, inspection_date: datetime, inspection_ty
 
     for attempt in range(3):
         try:
-            cnt_row = db.execute(
-                text("SELECT COUNT(*) AS cnt FROM tank_inspection_details WHERE DATE(inspection_date) = :d"),
-                {"d": inspection_date.date()},
-            ).fetchone()
-            if cnt_row is None:
-                count = 0
-            else:
-                if hasattr(cnt_row, "_mapping"):
-                    count = int(cnt_row._mapping.get("cnt", 0))
-                elif isinstance(cnt_row, dict):
-                    count = int(cnt_row.get("cnt", 0))
-                else:
-                    count = int(cnt_row[0])
+            cnt_row = db.execute(text("CALL sp_GetDailyInspectionCount(:d)"), {"d": inspection_date.date()}).mappings().first()
+            count = int(cnt_row.get("cnt", 0)) if cnt_row else 0
         except Exception:
             count = 0
 
@@ -237,7 +186,7 @@ def generate_report_number(db: Session, inspection_date: datetime, inspection_ty
         report_number = f"{prefix_part}-{date_str}-{next_counter:02d}"
 
         try:
-            existing = db.execute(text("SELECT 1 FROM tank_inspection_details WHERE report_number = :rn LIMIT 1"), {"rn": report_number}).fetchone()
+            existing = db.execute(text("CALL sp_CheckReportNumberExists(:rn)"), {"rn": report_number}).mappings().first()
             if not existing:
                 return report_number
         except Exception:
@@ -249,20 +198,7 @@ def generate_report_number(db: Session, inspection_date: datetime, inspection_ty
 
 
 def fetch_tank_details(db: Session, tank_number: str):
-    result = db.execute(
-        text(
-            """
-            SELECT t.working_pressure, t.frame_type, t.design_temperature, t.cabinet_type, t.mfgr, t.ownership,
-                   t.product_id, pm.product_name, t.safety_valve_brand_id, sv.brand_name AS safety_valve_brand_name
-            FROM tank_details t
-            LEFT JOIN product_master pm ON t.product_id = pm.id
-            LEFT JOIN safety_valve_brand sv ON t.safety_valve_brand_id = sv.id
-            WHERE t.tank_number = :tank_number
-            LIMIT 1
-            """
-        ),
-        {"tank_number": tank_number},
-    ).fetchone()
+    result = db.execute(text("CALL sp_GetInspectionTankDetails(:tank_number)"), {"tank_number": tank_number}).mappings().first()
 
     if not result:
         raise HTTPException(
@@ -270,59 +206,7 @@ def fetch_tank_details(db: Session, tank_number: str):
             detail=f"Tank details not found for tank_number: {tank_number}",
         )
 
-    try:
-        if hasattr(result, "_mapping"):
-            mapping = result._mapping
-            return {
-                "working_pressure": mapping.get("working_pressure"),
-                "frame_type": mapping.get("frame_type"),
-                "design_temperature": mapping.get("design_temperature"),
-                "cabinet_type": mapping.get("cabinet_type"),
-                "mfgr": mapping.get("mfgr"),
-                "ownership": mapping.get("ownership"),
-                "product_id": mapping.get("product_id"),
-                "product_name": mapping.get("product_name"),
-                "safety_valve_brand_id": mapping.get("safety_valve_brand_id"),
-                "safety_valve_brand_name": mapping.get("safety_valve_brand_name"),
-            }
-        else:
-            return {
-                "working_pressure": result[0],
-                "frame_type": result[1],
-                "design_temperature": result[2],
-                "cabinet_type": result[3],
-                "mfgr": result[4],
-                "ownership": result[5],
-                "product_id": result[6],
-                "product_name": result[7],
-                "safety_valve_brand_id": result[8],
-                "safety_valve_brand_name": result[9],
-            }
-    except Exception:
-        try:
-            rowm = dict(result)
-            working_pressure = rowm.get("working_pressure")
-            frame_type = rowm.get("frame_type")
-            design_temperature = rowm.get("design_temperature")
-            cabinet_type = rowm.get("cabinet_type")
-            mfgr = rowm.get("mfgr")
-            ownership = rowm.get("ownership")
-        except Exception:
-            working_pressure = frame_type = design_temperature = cabinet_type = mfgr = ownership = None
-
-    def to_float_if_decimal(val):
-        if isinstance(val, Decimal):
-            return float(val)
-        return val
-
-    return {
-        "working_pressure": working_pressure,
-        "cabinet_type": cabinet_type,
-        "frame_type": frame_type,
-        "design_temperature": design_temperature,
-        "mfgr": mfgr,
-        "ownership": ownership,
-    }
+    return dict(result)
 
 
 # -------------------------
@@ -333,6 +217,7 @@ class TankInspectionCreate(BaseModel):
     status_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
     location_id: Optional[int] = None
+    safety_valve_brand_id: Optional[int] = None  # nullable
     safety_valve_model_id: Optional[int] = None  # nullable
     safety_valve_size_id: Optional[int] = None   # nullable
     notes: Optional[str] = None
@@ -344,19 +229,21 @@ class TankInspectionCreate(BaseModel):
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "tank_id": 0,
-                "status_id": 0,
-                "inspection_type_id": 0,
-                "vaccum_reading": 0,
-                "vacuum_uom": 0,
-                "lifter_weight_value": 0,
-                "location_id": 0,
-                "safety_valve_model_id": 0,
-                "safety_valve_size_id": 0,
-                "notes": "All checks ok",
-                "operator_id": 0
-            }
+            "examples": [
+                {
+                    "tank_id": 0,
+                    "status_id": 0,
+                    "inspection_type_id": 0,
+                    "vaccum_reading": 0,
+                    "vacuum_uom": 0,
+                    "lifter_weight_value": 0,
+                    "location_id": 0,
+                    "safety_valve_model_id": 0,
+                    "safety_valve_size_id": 0,
+                    "notes": "All checks ok",
+                    "operator_id": 0
+                }
+            ]
         }
 
 class TankInspectionResponse(BaseModel):
@@ -419,29 +306,7 @@ def get_all_inspections(
     Includes joins for human-readable names.
     """
     try:
-        # Resolve emp_id for filtering if needed, but usually list all for admin/management
-        # For now, let's list all as requested: "all the created"
-        
-        query = text("""
-            SELECT 
-                ti.*,
-                ps.status_name,
-                pm.product_name,
-                it.inspection_type_name,
-                l.location_name,
-                sv.brand_name AS safety_valve_brand_name
-            FROM tank_inspection_details ti
-            JOIN tank_details td ON ti.tank_id = td.tank_id
-            LEFT JOIN tank_status ps ON ti.status_id = ps.id
-            LEFT JOIN product_master pm ON td.product_id = pm.id
-            LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
-            LEFT JOIN location_master l ON ti.location_id = l.id
-            LEFT JOIN safety_valve_brand sv ON td.safety_valve_brand_id = sv.id
-            WHERE (ti.is_reviewed = 0 OR ti.is_reviewed IS NULL)
-            ORDER BY ti.inspection_date DESC, ti.inspection_id DESC
-        """)
-        
-        results = db.execute(query).mappings().fetchall()
+        results = db.execute(text("CALL sp_GetAllInspectionDetails()")).mappings().fetchall()
         
         # Convert Decimals and datetimes for JSON, and remove IDs
         def clean_row(r):
@@ -465,6 +330,8 @@ def get_all_inspections(
                 if isinstance(v, Decimal):
                     d[k] = float(v)
                 elif isinstance(v, datetime):
+                    d[k] = v.isoformat()
+                elif isinstance(v, date):
                     d[k] = v.isoformat()
             return d
 
@@ -530,7 +397,7 @@ def export_inspections_to_excel(
             LEFT JOIN inspection_type it ON ti.inspection_type_id = it.id
             LEFT JOIN location_master pl ON ti.location_id = pl.id
             LEFT JOIN product_master pm ON td.product_id = pm.id
-            LEFT JOIN safety_valve_brand sb ON td.safety_valve_brand_id = sb.id
+            LEFT JOIN safety_valve_brand sb ON COALESCE(ti.safety_valve_brand_id, td.safety_valve_brand_id) = sb.id
             LEFT JOIN safety_valve_model sm ON ti.safety_valve_model_id = sm.id
             LEFT JOIN safety_valve_size ss ON ti.safety_valve_size_id = ss.id
             ORDER BY ti.inspection_date DESC
@@ -959,6 +826,7 @@ def create_tank_inspection(
         pi_next_date = payload.pi_next_inspection_date if payload.pi_next_inspection_date else fetch_pi_next_inspection_date(db, tank_number)
         ownership_val = tank_details.get("ownership")
         # Sanitize Safety Valve IDs for Insert (Ensure None if invalid)
+        svb = payload.safety_valve_brand_id if is_valid_id(payload.safety_valve_brand_id) else None
         svm = payload.safety_valve_model_id if is_valid_id(payload.safety_valve_model_id) else None
         svs = payload.safety_valve_size_id if is_valid_id(payload.safety_valve_size_id) else None
 
@@ -969,14 +837,14 @@ def create_tank_inspection(
                     INSERT INTO tank_inspection_details
                     (inspection_date, report_number, tank_number, tank_id, status_id, inspection_type_id, location_id,
                      working_pressure, frame_type, design_temperature, cabinet_type, mfgr, pi_next_inspection_date,
-                     safety_valve_model_id, safety_valve_size_id, notes,
+                     safety_valve_brand_id, safety_valve_model_id, safety_valve_size_id, notes,
                      vacuum_reading, vacuum_uom, lifter_weight_value,
                      created_by, updated_by,
                      operator_id, emp_id, ownership, is_submitted, created_at, updated_at)
                     VALUES
                     (:inspection_date, :report_number, :tank_number, :tank_id, :status_id, :inspection_type_id, :location_id,
                      :working_pressure, :frame_type, :design_temperature, :cabinet_type, :mfgr, :pi_next_inspection_date,
-                     :svm, :svs, :notes,
+                     :svb, :svm, :svs, :notes,
                      :vacuum_reading, :vacuum_uom, :lifter_weight_value,
                      :created_by, :updated_by,
                      :operator_id, :emp_id, :ownership, :is_submitted, NOW(), NOW())
@@ -995,7 +863,7 @@ def create_tank_inspection(
                     "cabinet_type": tank_details.get("cabinet_type"),
                     "mfgr": tank_details.get("mfgr"),
                     "pi_next_inspection_date": pi_next_date,
-                    "svm": svm, "svs": svs,
+                    "svb": svb, "svm": svm, "svs": svs,
                     "notes": payload.notes,
                     "vacuum_reading": payload.vacuum_reading,
                     "vacuum_uom": payload.vacuum_uom,
@@ -1009,6 +877,14 @@ def create_tank_inspection(
                     "is_submitted": 0,
                 },
             )
+            
+            # --- SYNCHRONIZE TANK MASTER ---
+            if svb is not None:
+                db.execute(
+                    text("UPDATE tank_details SET safety_valve_brand_id = :svb WHERE tank_number = :tn"),
+                    {"svb": svb, "tn": tank_number}
+                )
+            
             db.commit()
         except Exception as e:
             db.rollback()
@@ -1042,6 +918,7 @@ class TankInspectionUpdateModel(BaseModel):
     status_id: Optional[int] = None
     inspection_type_id: Optional[int] = None
     location_id: Optional[int] = None
+    safety_valve_brand_id: Optional[int] = None      # nullable
     safety_valve_model_id: Optional[int] = None      # nullable
     safety_valve_size_id: Optional[int] = None       # nullable
     vacuum_reading: Optional[str] = None
@@ -1062,12 +939,14 @@ def update_tank_inspection_details(
 ):
     try:
         # 1. Check if inspection exists and role permissions
-        row = db.execute(text("SELECT is_submitted, web_submitted FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
+        row = db.execute(text("SELECT is_submitted, web_submitted, tank_id, tank_number FROM tank_inspection_details WHERE inspection_id = :id"), {"id": inspection_id}).fetchone()
         if not row:
             return error_resp("Inspection not found", 404)
 
         is_submitted = int(row[0])
         web_submitted = int(row[1])
+        current_tank_id = int(row[2])
+        current_tank_number = str(row[3])
         role_id = current_user.role_id
         if (is_submitted == 1 or web_submitted == 1) and role_id == 2:
             return error_resp("Cannot edit submitted inspection", 403)
@@ -1124,7 +1003,7 @@ def update_tank_inspection_details(
         fields_to_update = [
             "inspection_date", "status_id", "inspection_type_id", "location_id",
             "working_pressure", "frame_type", "design_temperature", "cabinet_type", "mfgr",
-            "notes", "ownership", "safety_valve_model_id", "safety_valve_size_id",
+            "notes", "ownership", "safety_valve_brand_id", "safety_valve_model_id", "safety_valve_size_id",
             "vacuum_reading", "vacuum_uom", "lifter_weight_value", "pi_next_inspection_date"
         ]
 
@@ -1133,7 +1012,7 @@ def update_tank_inspection_details(
                 val = update_data[field]
                 
                 # Special Logic for Safety Valve Fields: Force invalid/empty to None
-                if field in ["safety_valve_model_id", "safety_valve_size_id"]:
+                if field in ["safety_valve_brand_id", "safety_valve_model_id", "safety_valve_size_id"]:
                     if not is_valid_id(val):
                         val = None
                 
@@ -1170,6 +1049,16 @@ def update_tank_inspection_details(
 
                 # Run Update
                 db.execute(text(sql), params)
+                
+                # --- SYNCHRONIZE TANK MASTER ---
+                # If safety_valve_brand_id was provided, update the tank_details table by tank_number
+                if "safety_valve_brand_id" in params:
+                    target_tank_number = params.get("tank_number", current_tank_number)
+                    db.execute(
+                        text("UPDATE tank_details SET safety_valve_brand_id = :svb WHERE tank_number = :tn"),
+                        {"svb": params["safety_valve_brand_id"], "tn": target_tank_number}
+                    )
+
                 db.commit()
                 
             except Exception as e:
@@ -1244,6 +1133,7 @@ def get_inspection_review(
                     ti.vacuum_reading,
                     ti.vacuum_uom,
                     ti.lifter_weight_value,
+                    ti.pi_next_inspection_date,
                     ti.is_reviewed,
                     ti.reviewed_by,
                     ti.is_submitted,
@@ -1276,28 +1166,28 @@ def get_inspection_review(
                 inspection["report_number"] = report_num.replace("SG-T1-", f"SG-{normalized_name}-T1-", 1)
 
 
+        # 1.a FETCH next_inspection_date FROM tank_certificate if not in ti
         # ---------------------------------------------------------
-        # 1.a FETCH next_inspection_date FROM tank_certificate
-        # ---------------------------------------------------------
-        try:
-            cert_row = db.execute(
-                text("""
-                    SELECT next_insp_date
-                    FROM tank_certificate
-                    WHERE tank_number = :tank_number
-                    ORDER BY id DESC
-                    LIMIT 1
-                """),
-                {"tank_number": inspection.get("tank_number")}
-            ).fetchone()
+        if not inspection.get("pi_next_inspection_date"):
+            try:
+                cert_row = db.execute(
+                    text("""
+                        SELECT next_insp_date
+                        FROM tank_certificate
+                        WHERE tank_number = :tank_number
+                        ORDER BY id DESC
+                        LIMIT 1
+                    """),
+                    {"tank_number": inspection.get("tank_number")}
+                ).fetchone()
 
-            inspection["next_inspection_date"] = (
-                cert_row._mapping["next_insp_date"] if cert_row else None
-            )
+                if cert_row:
+                    inspection["pi_next_inspection_date"] = (
+                        cert_row._mapping["next_insp_date"] if hasattr(cert_row, "_mapping") else cert_row[0]
+                    )
 
-        except Exception as e:
-            logger.warning(f"Failed to fetch next_inspection_date: {e}")
-            inspection["next_inspection_date"] = None
+            except Exception as e:
+                logger.warning(f"Failed to fetch pi_next_inspection_date fallback: {e}")
 
         # ---------------------------------------------------------
         # 2. FETCH IMAGES
@@ -1534,10 +1424,8 @@ def get_tank_details(
                     t.cabinet_type,
                     t.mfgr,
                     t.ownership,
-                    pm.product_name,
                     sb.brand_name AS safety_valve_brand_name
                 FROM tank_details t
-                LEFT JOIN product_master pm ON t.product_id = pm.id
                 LEFT JOIN safety_valve_brand sb ON t.safety_valve_brand_id = sb.id
                 WHERE t.tank_number = :tn
                 LIMIT 1
@@ -1558,8 +1446,7 @@ def get_tank_details(
                 "cabinet_type": td_row[3],
                 "mfgr": td_row[4],
                 "ownership": td_row[5],
-                "product_name": td_row[6],
-                "safety_valve_brand_name": td_row[7],
+                "safety_valve_brand_name": td_row[6],
             }
         )
 
@@ -1600,7 +1487,6 @@ def get_tank_details(
             "cabinet_type": row.get("cabinet_type"),
             "mfgr": row.get("mfgr"),
             "ownership": row.get("ownership"),
-            "product_name": row.get("product_name"),
             "safety_valve_brand_name": row.get("safety_valve_brand_name"),
             "pi_next_inspection_date": pi_next_inspection_date,
         }
@@ -1869,9 +1755,20 @@ def submit_inspection(
         try:
             insp_row = db.execute(
                 text("""
-                    SELECT ti.*, t.product_id, t.safety_valve_brand_id
+                    SELECT 
+                        ti.inspection_id, ti.tank_id, ti.tank_number, ti.report_number, ti.inspection_date,
+                        ti.status_id, ti.inspection_type_id, ti.location_id,
+                        ti.vacuum_reading, ti.vacuum_uom, ti.lifter_weight_value,
+                        ti.notes, ti.operator_id, ti.emp_id, ti.ownership,
+                        t.product_id as product_id,
+                        COALESCE(ti.pi_next_inspection_date, cert.next_insp_date) as pi_next_inspection_date
                     FROM tank_inspection_details ti
                     LEFT JOIN tank_details t ON ti.tank_id = t.tank_id
+                    LEFT JOIN (
+                        SELECT tank_number, MAX(next_insp_date) as next_insp_date
+                        FROM tank_certificate
+                        GROUP BY tank_number
+                    ) cert ON ti.tank_number = cert.tank_number
                     WHERE ti.inspection_id = :id
                     LIMIT 1
                 """),
@@ -1902,16 +1799,9 @@ def submit_inspection(
                     if isinstance(v, (int, float)) and int(v) == 0:
                         issues["inspection"].append({"field": f, "reason": "zero or invalid"})
 
-            # Validate PI next inspection date strictly from the inspection row
-            pi_keys = ["pi_next_inspection_date", "pi_next_insp_date", "next_insp_date", "pi_nextinsp_date"]
-            pi_found = False
-            for k in pi_keys:
-                v = insp.get(k)
-                if v is not None and not (isinstance(v, str) and v.strip() == ""):
-                    pi_found = True
-                    break
-                    
-            if not pi_found:
+            # Smart validation: Check if next inspection date was found either in inspection or certificates
+            pi_next = insp.get("pi_next_inspection_date")
+            if pi_next is None or (isinstance(pi_next, str) and pi_next.strip() == ""):
                 issues["inspection"].append({"field": "pi_next_inspection_date", "reason": "null or empty"})
 
         except Exception as e:
@@ -2148,6 +2038,7 @@ def review_finalize_inspection(
                     is_submitted=r["is_submitted"],
                     is_reviewed=r["is_reviewed"],
                     reviewed_by=r["reviewed_by"],
+                    web_submitted=r["web_submitted"],
                     created_by=r["created_by"],
                     updated_by=r["updated_by"],
                     history_date=func.now()

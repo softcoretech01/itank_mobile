@@ -11,8 +11,10 @@ class RoleRights(Base):
     user_role_id = Column(Integer, ForeignKey('role_master.role_id'), nullable=False)
     module_access = Column(String(100), nullable=False)
     screen = Column(String(100), nullable=False)
+    screen_id = Column(Integer, ForeignKey('screens_master.id'))
     edit_only = Column(Boolean, default=False)
     read_only = Column(Boolean, default=True)
 
     # Relationship
     role = relationship("RoleMaster", backref="rights")
+    screen_rel = relationship("ScreensMaster", backref="rights")

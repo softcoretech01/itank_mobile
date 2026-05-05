@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.tank_drawings import TankDrawing
-from app.models.tank_header import Tank
 import os
 from typing import Optional
 import logging
@@ -42,7 +42,7 @@ def validate_jpeg(upload_file: UploadFile, field_label: str):
             status_code=400,
             detail=f"{field_label}: File size exceeds 2 MB limit ({len(contents) // 1024} KB uploaded)."
         )
-    # Reset file pointer so save_uploaded_file can read it again
+    # Reset file pointer so save_uploaded_file can read it aimage2in
     upload_file.file.seek(0)
 
 
@@ -116,21 +116,36 @@ def serialize_drawing_obj(d):
             return ""
         return to_cdn_url(raw) if "://" not in raw else raw
 
+    # Support both SQLAlchemy Row objects (dot notation) and RowMapping/dict objects (bracket notation)
+    def get_val(obj, key, default=None):
+        if hasattr(obj, key):
+            return getattr(obj, key)
+        try:
+            return obj[key]
+        except (KeyError, TypeError):
+            return default
+
     return {
-        "id": d.id,
-        "tank_id": d.tank_id,
-        "tank_number": getattr(d.tank, 'tank_number', None) if hasattr(d, 'tank') else None,
-        "pid_reference": d.pid_reference,
-        "ga_drawing": d.ga_drawing,
-        "pid_drawing": to_url(getattr(d, "pid_drawing", None)),
-        "pid_drawing_name": getattr(d, "pid_drawing_name", None),
-        "ga_drawing_file": to_url(getattr(d, "ga_drawing_file", None)),
-        "ga_drawing_file_name": getattr(d, "ga_drawing_file_name", None),
-        "status": getattr(d, 'status', 1),
-        "created_by": d.created_by,
-        "updated_by": getattr(d, 'updated_by', None),
-        "created_at": d.created_at.isoformat() if d.created_at else None,
-        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+        "id": get_val(d, "id"),
+        "pid_reference": get_val(d, "pid_reference"),
+        "pid_drawing": to_url(get_val(d, "pid_drawing")),
+        "pid_drawing_name": get_val(d, "pid_drawing_name"),
+        "image2_drawing_file": to_url(get_val(d, "image2_drawing_file")),
+        "image2_drawing_file_name": get_val(d, "image2_drawing_file_name"),
+        "img3": to_url(get_val(d, "img3")),
+        "img3_name": get_val(d, "img3_name"),
+        "img4": to_url(get_val(d, "img4")),
+        "img4_name": get_val(d, "img4_name"),
+        "img5": to_url(get_val(d, "img5")),
+        "img5_name": get_val(d, "img5_name"),
+        "img6": to_url(get_val(d, "img6")),
+        "img6_name": get_val(d, "img6_name"),
+        "status": 0 if get_val(d, 'status', 1) == 0 else 1,
+        "remarks": get_val(d, 'remarks', "") or "",
+        "created_by": get_val(d, "created_by"),
+        "updated_by": get_val(d, 'updated_by'),
+        "created_at": get_val(d, "created_at").isoformat() if get_val(d, "created_at") else None,
+        "updated_at": get_val(d, "updated_at").isoformat() if get_val(d, "updated_at") else None,
     }
 
 
@@ -141,20 +156,17 @@ from sqlalchemy.orm import joinedload
 @router.post("/{path_tank_id}")
 def upload_drawing(
     path_tank_id: Optional[int] = None,
-    tank_id: Optional[int] = Form(None),
     pid_reference: Optional[str] = Form(None),
-    ga_drawing: Optional[str] = Form(None),
     pid_drawing_file: Optional[UploadFile] = File(None),
-    ga_drawing_file: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-    authorization: Optional[str] = Header(None)
+    image2_drawing_file: Optional[UploadFile] = File(None),
+    img3_file: Optional[UploadFile] = File(None),
+    img4_file: Optional[UploadFile] = File(None),
+    img5_file: Optional[UploadFile] = File(None),
+    img6_file: Optional[UploadFile] = File(None),
+    remarks: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
 ):
-    if path_tank_id is not None:
-        tank_id = path_tank_id
-
-    if tank_id is None:
-        raise HTTPException(status_code=400, detail="tank_id is required")
-
     emp_id = "System"
     if authorization:
         try:
@@ -162,11 +174,7 @@ def upload_drawing(
         except Exception:
             pass
 
-    tank_record = db.query(Tank).filter(Tank.id == tank_id).first()
-    if not tank_record:
-        raise HTTPException(status_code=404, detail="Tank not found")
-
-    tank_number = tank_record.tank_number
+    tank_number = "GLOBAL"
 
     # Validate & save uploaded files
     img_data = {}
@@ -185,109 +193,108 @@ def upload_drawing(
             img_data["pid_drawing"] = None
             img_data["pid_drawing_name"] = None
 
-        if ga_drawing_file and ga_drawing_file.filename:
-            validate_jpeg(ga_drawing_file, "GA Drawing")
+        if image2_drawing_file and image2_drawing_file.filename:
+            validate_jpeg(image2_drawing_file, "image2 Drawing")
             path = save_uploaded_file(
-                upload_file=ga_drawing_file,
+                upload_file=image2_drawing_file,
                 tank_number=tank_number,
-                image_type='drawing_ga',
+                image_type='drawing_image2',
                 upload_root=UPLOAD_ROOT
             )
-            img_data["ga_drawing_file"] = path
-            img_data["ga_drawing_file_name"] = ga_drawing_file.filename
+            img_data["image2_drawing_file"] = path
+            img_data["image2_drawing_file_name"] = image2_drawing_file.filename
         else:
-            img_data["ga_drawing_file"] = None
-            img_data["ga_drawing_file_name"] = None
+            img_data["image2_drawing_file"] = None
+            img_data["image2_drawing_file_name"] = None
+
+        # Additional 4 images
+        for idx in range(3, 7):
+            f_key = f"img{idx}_file"
+            f_obj = locals().get(f_key)
+            if f_obj and f_obj.filename:
+                validate_jpeg(f_obj, f"Image {idx}")
+                path = save_uploaded_file(
+                    upload_file=f_obj,
+                    tank_number=tank_number,
+                    image_type=f'drawing_img{idx}',
+                    upload_root=UPLOAD_ROOT
+                )
+                img_data[f"img{idx}"] = path
+                img_data[f"img{idx}_name"] = f_obj.filename
+            else:
+                img_data[f"img{idx}"] = None
+                img_data[f"img{idx}_name"] = None
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
-    existing_drawing = db.query(TankDrawing).filter(TankDrawing.tank_id == tank_id).first()
-    if existing_drawing:
-        if pid_reference is not None:
-            existing_drawing.pid_reference = pid_reference.strip() if pid_reference and pid_reference.strip() else None
-        if ga_drawing is not None:
-            existing_drawing.ga_drawing = ga_drawing.strip() if ga_drawing and ga_drawing.strip() else None
+    if pid_reference:
+        ref = pid_reference.strip()
+        dup = db.execute(text("SELECT id FROM tank_drawings WHERE pid_reference = :ref LIMIT 1"), {"ref": ref}).mappings().first()
+        if dup:
+            raise HTTPException(status_code=400, detail="This P&ID Reference already exists.")
 
-        if img_data.get("pid_drawing"):
-            old = existing_drawing.pid_drawing
-            if old:
-                delete_file_if_exists(UPLOAD_ROOT, old)
-            existing_drawing.pid_drawing = img_data["pid_drawing"]
-            existing_drawing.pid_drawing_name = img_data["pid_drawing_name"]
-
-        if img_data.get("ga_drawing_file"):
-            old = existing_drawing.ga_drawing_file
-            if old:
-                delete_file_if_exists(UPLOAD_ROOT, old)
-            existing_drawing.ga_drawing_file = img_data["ga_drawing_file"]
-            existing_drawing.ga_drawing_file_name = img_data["ga_drawing_file_name"]
-
-        existing_drawing.updated_by = emp_id
+    try:
+        result = db.execute(
+            text("CALL sp_CreateDrawing(:pid_ref, :pid_draw, :pid_draw_name, :img2, :img2_name, :img3, :img3_name, :img4, :img4_name, :img5, :img5_name, :img6, :img6_name, :remarks, :eid)"),
+            {
+                "pid_ref": pid_reference.strip() if pid_reference and pid_reference.strip() else None,
+                "pid_draw": img_data.get("pid_drawing"),
+                "pid_draw_name": img_data.get("pid_drawing_name"),
+                "img2": img_data.get("image2_drawing_file"),
+                "img2_name": img_data.get("image2_drawing_file_name"),
+                "img3": img_data.get("img3"),
+                "img3_name": img_data.get("img3_name"),
+                "img4": img_data.get("img4"),
+                "img4_name": img_data.get("img4_name"),
+                "img5": img_data.get("img5"),
+                "img5_name": img_data.get("img5_name"),
+                "img6": img_data.get("img6"),
+                "img6_name": img_data.get("img6_name"),
+                "remarks": remarks.strip() if remarks and remarks.strip() else None,
+                "eid": str(emp_id)
+            }
+        ).mappings().first()
         db.commit()
-        db.refresh(existing_drawing)
-        db_drawing = existing_drawing
-    else:
-        try:
-            db_drawing = TankDrawing(
-                tank_id=tank_id,
-                pid_reference=pid_reference.strip() if pid_reference and pid_reference.strip() else None,
-                ga_drawing=ga_drawing.strip() if ga_drawing and ga_drawing.strip() else None,
-                pid_drawing=img_data.get("pid_drawing"),
-                pid_drawing_name=img_data.get("pid_drawing_name"),
-                ga_drawing_file=img_data.get("ga_drawing_file"),
-                ga_drawing_file_name=img_data.get("ga_drawing_file_name"),
-                created_by=emp_id,
-                updated_by=emp_id
-            )
-            db.add(db_drawing)
-            db.commit()
-            db.refresh(db_drawing)
-        except Exception as e:
-            for key in ["pid_drawing", "ga_drawing_file"]:
-                p = img_data.get(key)
-                if p:
-                    delete_file_if_exists(UPLOAD_ROOT, p)
-            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-    return {"message": "Drawing uploaded successfully", "data": serialize_drawing_obj(db_drawing)}
+        return {"message": "Drawing uploaded successfully", "data": serialize_drawing_obj(result) if result else {}}
+    except Exception as e:
+        db.rollback()
+        for key in ["pid_drawing", "image2_drawing_file", "img3", "img4", "img5", "img6"]:
+            p = img_data.get(key)
+            if p:
+                delete_file_if_exists(UPLOAD_ROOT, p)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 # --- READ (List All) ---
 @router.get("/")
 def get_all_drawings(db: Session = Depends(get_db)):
-    drawings = db.query(TankDrawing).options(joinedload(TankDrawing.tank)).all()
-    return [serialize_drawing_obj(d) for d in drawings]
+    results = db.execute(text("CALL sp_GetAllDrawings()")).mappings().fetchall()
+    return [serialize_drawing_obj(r) for r in results]
 
 
 # --- READ (List by Tank) ---
-@router.get("/tank/{tank_id}")
-def get_drawings_by_tank(tank_id: int, db: Session = Depends(get_db)):
-    drawings = (
-        db.query(TankDrawing)
-        .options(joinedload(TankDrawing.tank))
-        .filter(TankDrawing.tank_id == tank_id)
-        .order_by(TankDrawing.created_at.desc())
-        .all()
-    )
-    return [serialize_drawing_obj(d) for d in drawings]
+@router.get("/all")
+def get_drawings_list(db: Session = Depends(get_db)):
+    results = db.execute(text("CALL sp_GetAllDrawings()")).mappings().fetchall()
+    return [serialize_drawing_obj(r) for r in results]
 
 
 # --- DELETE ---
 @router.delete("/{drawing_id}")
 def delete_drawing(drawing_id: int, db: Session = Depends(get_db)):
-    drawing = db.query(TankDrawing).filter(TankDrawing.id == drawing_id).first()
+    drawing = db.execute(text("CALL sp_GetDrawingById(:id)"), {"id": drawing_id}).mappings().first()
     if not drawing:
         raise HTTPException(status_code=404, detail="Drawing not found")
 
-    for field in ["pid_drawing", "ga_drawing_file"]:
-        p = getattr(drawing, field, None)
+    for field in ["pid_drawing", "image2_drawing_file", "img3", "img4", "img5", "img6"]:
+        p = drawing.get(field)
         if p:
             delete_file_if_exists(UPLOAD_ROOT, p)
 
-    db.delete(drawing)
+    db.execute(text("CALL sp_DeleteDrawing(:id)"), {"id": drawing_id})
     db.commit()
     return {"message": "Drawing deleted successfully"}
 
@@ -297,16 +304,24 @@ def delete_drawing(drawing_id: int, db: Session = Depends(get_db)):
 def update_drawing(
     drawing_id: int,
     pid_reference: Optional[str] = Form(None),
-    ga_drawing: Optional[str] = Form(None),
     status: Optional[int] = Form(None),
     pid_drawing_file: Optional[UploadFile] = File(None),
-    ga_drawing_file: Optional[UploadFile] = File(None),
+    image2_drawing_file: Optional[UploadFile] = File(None),
+    img3_file: Optional[UploadFile] = File(None),
+    img4_file: Optional[UploadFile] = File(None),
+    img5_file: Optional[UploadFile] = File(None),
+    img6_file: Optional[UploadFile] = File(None),
+    remarks: Optional[str] = Form(None),
     clear_pid_drawing: Optional[str] = Form(None),
-    clear_ga_drawing_file: Optional[str] = Form(None),
+    clear_image2_drawing_file: Optional[str] = Form(None),
+    clear_img3: Optional[str] = Form(None),
+    clear_img4: Optional[str] = Form(None),
+    clear_img5: Optional[str] = Form(None),
+    clear_img6: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None)
 ):
-    drawing = db.query(TankDrawing).filter(TankDrawing.id == drawing_id).first()
+    drawing = db.execute(text("CALL sp_GetDrawingById(:id)"), {"id": drawing_id}).mappings().first()
     if not drawing:
         raise HTTPException(status_code=404, detail="Drawing not found")
 
@@ -317,35 +332,41 @@ def update_drawing(
         except Exception:
             pass
 
-    if pid_reference is not None:
-        drawing.pid_reference = pid_reference.strip() if pid_reference.strip() else None
+    # Copy current values to a dictionary for updating
+    upd = dict(drawing)
 
-    if ga_drawing is not None:
-        drawing.ga_drawing = ga_drawing.strip() if ga_drawing.strip() else None
+    if pid_reference is not None:
+        ref = pid_reference.strip()
+        other = db.execute(text("SELECT id FROM tank_drawings WHERE pid_reference = :ref AND id <> :id LIMIT 1"), {"ref": ref, "id": drawing_id}).mappings().first()
+        if other:
+            raise HTTPException(status_code=400, detail="This P&ID Reference already exists.")
+        upd["pid_reference"] = ref if ref else None
 
     if status is not None:
-        drawing.status = 1 if int(status) == 1 else 0
+        upd["status"] = 1 if int(status) == 1 else 0
 
-    tank_record = db.query(Tank).filter(Tank.id == drawing.tank_id).first()
-    tank_number = tank_record.tank_number if tank_record else "UNKNOWN"
+    if remarks is not None:
+        upd["remarks"] = remarks.strip() if remarks and remarks.strip() else None
+
+    tank_number = "GLOBAL"
 
     try:
         # --- Handle clear requests ---
         if clear_pid_drawing == '1':
-            if drawing.pid_drawing:
-                delete_file_if_exists(UPLOAD_ROOT, drawing.pid_drawing)
-            drawing.pid_drawing = None
-            drawing.pid_drawing_name = None
+            if upd["pid_drawing"]:
+                delete_file_if_exists(UPLOAD_ROOT, upd["pid_drawing"])
+            upd["pid_drawing"] = None
+            upd["pid_drawing_name"] = None
 
-        if clear_ga_drawing_file == '1':
-            if drawing.ga_drawing_file:
-                delete_file_if_exists(UPLOAD_ROOT, drawing.ga_drawing_file)
-            drawing.ga_drawing_file = None
-            drawing.ga_drawing_file_name = None
+        if clear_image2_drawing_file == '1':
+            if upd["image2_drawing_file"]:
+                delete_file_if_exists(UPLOAD_ROOT, upd["image2_drawing_file"])
+            upd["image2_drawing_file"] = None
+            upd["image2_drawing_file_name"] = None
 
         if pid_drawing_file and pid_drawing_file.filename:
             validate_jpeg(pid_drawing_file, "P&ID Drawing")
-            old = drawing.pid_drawing
+            old = upd["pid_drawing"]
             if old:
                 delete_file_if_exists(UPLOAD_ROOT, old)
             new_path = save_uploaded_file(
@@ -354,30 +375,81 @@ def update_drawing(
                 image_type='drawing_pid',
                 upload_root=UPLOAD_ROOT
             )
-            drawing.pid_drawing = new_path
-            drawing.pid_drawing_name = pid_drawing_file.filename
+            upd["pid_drawing"] = new_path
+            upd["pid_drawing_name"] = pid_drawing_file.filename
 
-        if ga_drawing_file and ga_drawing_file.filename:
-            validate_jpeg(ga_drawing_file, "GA Drawing")
-            old = drawing.ga_drawing_file
+        if image2_drawing_file and image2_drawing_file.filename:
+            validate_jpeg(image2_drawing_file, "image2 Drawing")
+            old = upd["image2_drawing_file"]
             if old:
                 delete_file_if_exists(UPLOAD_ROOT, old)
             new_path = save_uploaded_file(
-                upload_file=ga_drawing_file,
+                upload_file=image2_drawing_file,
                 tank_number=tank_number,
-                image_type='drawing_ga',
+                image_type='drawing_image2',
                 upload_root=UPLOAD_ROOT
             )
-            drawing.ga_drawing_file = new_path
-            drawing.ga_drawing_file_name = ga_drawing_file.filename
+            upd["image2_drawing_file"] = new_path
+            upd["image2_drawing_file_name"] = image2_drawing_file.filename
+
+        # Additional 4 images
+        for idx in range(3, 7):
+            f_key = f"img{idx}_file"
+            clear_key = f"clear_img{idx}"
+            col_key = f"img{idx}"
+            name_key = col_key + "_name"
+
+            if locals().get(clear_key) == '1':
+                old = upd[col_key]
+                if old:
+                    delete_file_if_exists(UPLOAD_ROOT, old)
+                upd[col_key] = None
+                upd[name_key] = None
+
+            f_obj = locals().get(f_key)
+            if f_obj and f_obj.filename:
+                validate_jpeg(f_obj, f"Image {idx}")
+                old = upd[col_key]
+                if old:
+                    delete_file_if_exists(UPLOAD_ROOT, old)
+                new_path = save_uploaded_file(
+                    upload_file=f_obj,
+                    tank_number=tank_number,
+                    image_type=f'drawing_img{idx}',
+                    upload_root=UPLOAD_ROOT
+                )
+                upd[col_key] = new_path
+                upd[name_key] = f_obj.filename
+
+        # Finally, call the update procedure
+        result = db.execute(
+            text("CALL sp_UpdateDrawing(:id, :pid_ref, :status, :pid_draw, :pid_draw_name, :img2, :img2_name, :img3, :img3_name, :img4, :img4_name, :img5, :img5_name, :img6, :img6_name, :remarks, :eid)"),
+            {
+                "id": drawing_id,
+                "pid_ref": upd["pid_reference"],
+                "status": upd["status"],
+                "pid_draw": upd["pid_drawing"],
+                "pid_draw_name": upd["pid_drawing_name"],
+                "img2": upd["image2_drawing_file"],
+                "img2_name": upd["image2_drawing_file_name"],
+                "img3": upd["img3"],
+                "img3_name": upd["img3_name"],
+                "img4": upd["img4"],
+                "img4_name": upd["img4_name"],
+                "img5": upd["img5"],
+                "img5_name": upd["img5_name"],
+                "img6": upd["img6"],
+                "img6_name": upd["img6_name"],
+                "remarks": upd["remarks"],
+                "eid": str(emp_id)
+            }
+        ).mappings().first()
+        db.commit()
+        return {"message": "Drawing updated successfully", "data": dict(result) if result else {}}
 
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"File update failed: {str(e)}")
-
-    drawing.updated_by = emp_id
-    db.commit()
-    db.refresh(drawing)
-
-    return {"message": "Drawing updated successfully", "data": serialize_drawing_obj(drawing)}

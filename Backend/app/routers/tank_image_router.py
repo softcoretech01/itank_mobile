@@ -482,22 +482,19 @@ async def batch_upload_images(
                         if slug_key.lower() in m_list:
                             is_marked_val = 1
 
-                    # --- REPLACE WITH THIS FIXED QUERY ---
-                    cursor.execute("""
-                        INSERT INTO tank_images 
-                        (emp_id, inspection_id, image_id, tank_number, image_type, image_path, thumbnail_path, created_at, is_marked)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
-                    """, (
-                        emp_to_use, 
-                        derived_insp_id, 
-                        image_type_id, 
-                        tank_number, 
-                        final_slug, 
-                        saved_info["image_path"],
-                        saved_info.get("thumbnail_path"),
-                        is_marked_val
-                    ))
-                    # -------------------------------------
+                    cursor.execute(
+                        "CALL sp_CreateTankImage(%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            emp_to_use, 
+                            derived_insp_id, 
+                            image_type_id, 
+                            tank_number, 
+                            final_slug, 
+                            saved_info["image_path"],
+                            saved_info.get("thumbnail_path"),
+                            is_marked_val
+                        )
+                    )
 
                     successful_inserts.append({
                         "image_type_id": image_type_id,
@@ -515,6 +512,31 @@ async def batch_upload_images(
     finally:
         conn.close()
 
+# ------------------------------------------------------------------
+# ENDPOINT: GET image types
+# ------------------------------------------------------------------
+@router.get("/types")
+def get_image_types():
+    conn = get_db_connection()
+    try:
+        with conn.cursor(DictCursor) as cur:
+            cur.execute("CALL sp_GetImageTypes()")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return {
+        "success": True,
+        "data": [
+            {
+                "image_type_id": r["id"],
+                "image_type": r["image_type"],
+                "description": r["description"],
+                "count": r.get("count", 1)  # Return DB limit, default 1
+            }
+            for r in rows
+        ]
+    }
 
 # ------------------------------------------------------------------
 # ENDPOINT: Get images by inspection (GET) - modified output format
@@ -538,7 +560,7 @@ def get_images_by_inspection(inspection_id: int):
         conn = get_db_connection()
         try:
             with conn.cursor(DictCursor) as cursor:
-                cursor.execute("SELECT id, emp_id, inspection_id, image_id, image_type, image_path, thumbnail_path, created_at, is_marked FROM tank_images WHERE inspection_id = %s ORDER BY created_at ASC", (inspection_id,))
+                cursor.execute("CALL sp_GetTankImagesByInspection(%s)", (inspection_id,))
                 rows = cursor.fetchall() or []
 
                 # derive inspection-level tank_id and emp_id from tank_inspection_details
@@ -549,7 +571,6 @@ def get_images_by_inspection(inspection_id: int):
 
         # derive tank_id and emp_id for top-level output
         tank_id = insp_row.get("tank_id") if insp_row.get("tank_id") is not None else ""
-        # prefer emp_id from inspection row if set else operator_id else first image emp_id
         emp_id = insp_row.get("emp_id") if insp_row.get("emp_id") is not None else insp_row.get("operator_id")
 
         # build images list
@@ -775,23 +796,18 @@ async def replace_images_by_inspection_id(
             ]
             old_rows = []
             if image_type_ids_to_replace:
+                type_ids_str = ",".join(map(str, image_type_ids_to_replace))
+                
+                # Fetch old rows for file cleanup
                 placeholders = ",".join(["%s"] * len(image_type_ids_to_replace))
                 cursor.execute(
-                    f"""
-                    SELECT id, image_id, image_path, thumbnail_path
-                    FROM tank_images
-                    WHERE inspection_id = %s AND image_id IN ({placeholders})
-                    """,
-                    (inspection_id, *image_type_ids_to_replace),
+                    f"SELECT id, image_id, image_path, thumbnail_path FROM tank_images WHERE inspection_id = %s AND image_id IN ({placeholders})",
+                    (inspection_id, *image_type_ids_to_replace)
                 )
                 old_rows = cursor.fetchall() or []
-                cursor.execute(
-                    f"""
-                    DELETE FROM tank_images
-                    WHERE inspection_id = %s AND image_id IN ({placeholders})
-                    """,
-                    (inspection_id, *image_type_ids_to_replace),
-                )
+                
+                # Delete using procedure
+                cursor.execute("CALL sp_DeleteTankImagesByType(%s, %s)", (inspection_id, type_ids_str))
 
             # Cleanup old files from disk (only for replaced types)
             for row in old_rows:
@@ -838,20 +854,19 @@ async def replace_images_by_inspection_id(
                         if slug_key.lower() in m_list:
                             is_marked_val = 1
 
-                    cursor.execute("""
-                        INSERT INTO tank_images 
-                        (emp_id, inspection_id, image_id, tank_number, image_type, image_path, thumbnail_path, created_at, is_marked)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
-                    """, (
-                        emp_to_use, 
-                        inspection_id, 
-                        image_type_id, 
-                        tank_number, 
-                        final_slug, 
-                        saved_info["image_path"],
-                        saved_info.get("thumbnail_path"),
-                        is_marked_val
-                    ))
+                    cursor.execute(
+                        "CALL sp_CreateTankImage(%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            emp_to_use,
+                            inspection_id,
+                            image_type_id,
+                            tank_number,
+                            final_slug,
+                            saved_info["image_path"],
+                            saved_info.get("thumbnail_path"),
+                            is_marked_val
+                        )
+                    )
 
                     successful_inserts.append({
                         "image_type_id": image_type_id,

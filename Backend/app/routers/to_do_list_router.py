@@ -78,37 +78,8 @@ class GenericResponse(BaseModel):
 def _sync_flagged_to_todo(cursor, checklist_id: int):
     """
     Sync a flagged checklist row to to_do_list.
-    Now uses inspection_id instead of report_id.
     """
-    cursor.execute("""
-        SELECT id, inspection_id, tank_id, job_name, sub_job_description, sn, status_id, comment, created_at
-        FROM inspection_checklist
-        WHERE id=%s AND flagged=1
-    """, (checklist_id,))
-    row = cursor.fetchone()
-    if not row:
-        return
-    cursor.execute("""
-        INSERT INTO to_do_list (checklist_id, inspection_id, tank_id, job_name, sub_job_description, sn, status_id, comment, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            inspection_id=VALUES(inspection_id),
-            tank_id=VALUES(tank_id),
-            job_name=VALUES(job_name),
-            sub_job_description=VALUES(sub_job_description),
-            status_id=VALUES(status_id),
-            comment=VALUES(comment)
-    """, (
-        checklist_id,
-        row['inspection_id'],
-            row['tank_id'],
-        row['job_name'],
-        row['sub_job_description'],
-        row['sn'],
-        row['status_id'],
-        row['comment'],
-        row['created_at']
-    ))
+    cursor.execute("CALL sp_SyncFlaggedToTodo(%s)", (checklist_id,))
 
 
 # ----------------------------
@@ -119,12 +90,7 @@ def get_to_do_list():
     conn = get_db_connection()
     try:
         with conn.cursor(DictCursor) as cursor:
-            cursor.execute("""
-                SELECT id, checklist_id, inspection_id, tank_id, job_name, sub_job_description,
-                       sn, status_id, comment, created_at
-                FROM to_do_list
-                ORDER BY created_at DESC
-            """)
+            cursor.execute("CALL sp_GetTodoList()")
             rows = cursor.fetchall() or []
 
             # Convert numeric status_id -> status_name
@@ -229,7 +195,7 @@ def delete_to_do_item(to_do_id: int):
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"To-do item {to_do_id} not found")
             
-            cursor.execute("DELETE FROM to_do_list WHERE id=%s", (to_do_id,))
+            cursor.execute("CALL sp_DeleteTodoItem(%s)", (to_do_id,))
             conn.commit()
             return success_resp("To-do item deleted", {"id": to_do_id}, 200)
     finally:
@@ -242,31 +208,12 @@ def delete_to_do_item(to_do_id: int):
 def get_flagged_by_inspection_grouped(inspection_id: int):
     """
     Return flagged items for an inspection grouped into sections.
-    Uses SQL JOINs to ensure job_id and sub_job_id are retrieved correctly.
-    Normalizes numeric fields to integers where possible.
     """
     conn = get_db_connection()
     try:
         with conn.cursor(DictCursor) as cursor:
-            # 1. Fetch To-Do Items with JOIN to get checklist details (job_id, sub_job_id)
-            query = """
-                SELECT 
-                    t.sn, 
-                    t.sub_job_description as title,
-                    t.status_id,
-                    t.checklist_id,
-                    t.tank_id,
-                    t.job_name,
-                    c.job_id, 
-                    c.sub_job_id, 
-                    c.emp_id as checklist_emp_id,
-                    t.comment
-                FROM to_do_list t
-                LEFT JOIN inspection_checklist c ON t.checklist_id = c.id
-                WHERE t.inspection_id = %s
-                ORDER BY t.created_at DESC
-            """
-            cursor.execute(query, (inspection_id,))
+            # 1. Fetch To-Do Items using procedure
+            cursor.execute("CALL sp_GetFlaggedByInspection(%s)", (inspection_id,))
             rows = cursor.fetchall() or []
 
             # 2. Get Header Info (Fallback for emp_id)
@@ -278,7 +225,6 @@ def get_flagged_by_inspection_grouped(inspection_id: int):
 
             # 3. Group the items
             sections = {}
-            # Deduplication set: (job_id, sub_job_id, sn)
             seen_items = set()
             for r in rows:
                 job_id = r.get('job_id')
@@ -320,13 +266,11 @@ def get_flagged_by_inspection_grouped(inspection_id: int):
                 })
 
             # 4. Final Response Construction
-            # Use header emp_id if we have it, otherwise try to find one from the rows
             final_emp_id = header_emp_id
             if final_emp_id is None and rows:
                 if rows[0].get('checklist_emp_id'):
                     final_emp_id = _normalize_int(rows[0].get('checklist_emp_id'))
 
-            # Build output sections list with normalized job_id and aggregated status_id
             from collections import Counter
             out_sections = []
             for job_key, grp in sections.items():
@@ -396,7 +340,8 @@ class ToDoUpdatePayload(BaseModel):
     
     class Config:
         json_schema_extra = {
-            "example": {
+            "examples": [
+                {
                 "inspection_id": 123,
                 "sections": [
                     {
@@ -472,7 +417,8 @@ class ToDoUpdatePayload(BaseModel):
                     }
                 ]
             }
-        }
+        ]
+    }
 
 
 @router.put("/update")
